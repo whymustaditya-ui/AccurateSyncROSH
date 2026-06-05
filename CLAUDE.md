@@ -1,0 +1,200 @@
+# AccurateSync — ROSH automation hub
+
+Google Apps Script project bound to a Google Sheet. Pulls data from **Accurate Online**
+(accounting system) via its Open API and turns it into ROSH's operating layer: AR
+tracking and KPI payroll math. This folder is the source
+of truth — the live script lives in the Sheet's bound Apps Script editor; these files are
+the versioned copies.
+
+**Target Sheet ID:** `1-BQ3zieAZkaaUVkUIgI8ZQKAZ-x1dLFOuntl8n1aUcw`
+**Runtime:** Apps Script (V8), timezone Asia/Jakarta. Auth = Accurate OAuth2 + open-db session.
+
+---
+
+## Files
+
+| File | Role |
+|------|------|
+| `Code.gs` | OAuth2, credentials (Script Properties), db-list/open-db session, HMAC signing (off), HTTP+308 helper, `onOpen` menu |
+| `Sync.gs` | Invoice fetch + `normalizeInvoice`, customer-contact lookup, **bulk receipts** (`buildReceiptsByInvoice` → index by invoice id; `enrichReceipts` consumes the map, no per-invoice `detail.do`), Pool A/B classify, handover (>14d), sheet writers, sync trigger |
+| `Kpi.gs` | Sales KPI + AR Officer KPI math (take-home pay, bonuses, penalty flags) |
+| `Health.gs` | Business Health (master-only): AR aging waterfall, DSO, collected-vs-billed MTD, top debtors + **daily trend snapshots** (hidden `_MetricSnapshots`, upsert-by-date) driving SPARKLINE trends. `computeBusinessHealth`/`recordMetricSnapshot`/`writeHealthSections`. **Folded into the `📋 Ringkasan` tab (no separate tab since 2026-06-05)** — `writeHealthSections(sh,row,m,span)` appends RINGKAS/AGING/TREN/TOP DEBITUR below the Summary, master only. Pure projection of the enriched `invoices`+`ctx` — zero new Accurate calls/scope |
+| `Route.gs` | Rute Penagihan: aggregate Ade's open AR by customer, zona grouping (`Zona (auto)` from address-text regex `_zonaFromAddress`, geocode fallback + Ade override), zona priority (Σ Rp × umur), nearest-neighbour stop ordering from Maps pins / geocoded coords, `Tier (4bln)` + `Tipe Dispatch` (`_dispatchType`: Solo/Nearest/Rute/Antri) cols, `🗺️ Rute Penagihan` writer. Built-in Maps geocoder + `_PinCache`/`_GeoCache` |
+| `Pesan.gs` | Pesan Penagihan: ready-to-send WA messages **group-by-customer** (1 pesan gabung faktur window H-1→H+14) via `buildPenagihanBatch`. `_waPhone` normalize, `_penagihanMessageBatch` (tone per bucket H-1/H+3/H+7/H+14 + tier A/B soften + bank instr + CTA "balas SUDAH"), `_waLinkFormula` (wa.me prefill), `✉️ Pesan Penagihan` writer. Master-only |
+| `StopSupply.gs` | ⛔ Stop Supply (HOLD): `buildStopSupply` (customer dengan invoice ≥H+7 belum bayar), `writeStopSupplyTab`. Flag-only — Nathan tahan SO baru manual di Accurate (OAuth read-only). Master-only |
+| `Faktur.gs` | Faktur Penjualan PDF: `buildFakturHtml`→HTML→PDF, Drive cache, `terbilang`, `fakturLinkFormula` = **DIRECT Drive `/view` link if cached, else blank** (generation is server-side: `generateFakturPdfs`/`catchUpFakturPdfs`/daily trigger). `doGet` web app kept for owner/diag only — **generate-on-click via /exec is a dead end in multi-account browsers**, see Faktur section. setup/diag |
+| `Style.gs` / `Diag.gs` | Formatting helpers / diagnostics |
+| `SETUP.md` | Accurate sync setup |
+
+---
+
+## Business rules baked in
+
+- **Handover:** invoice unpaid >14 days past due → handed to AR Officer **Ade** (onboard 2026-06-02). `handoverDate = dueDate + 15`. Sales (Deden, Dian) own H+0…H+14.
+- **Pools:** Pool A = frozen legacy AR (handover ≤ onboard, unpaid at onboard). Pool B = ongoing AR.
+- **Sales KPI:** THP = base 3.5jt + tunjangan(score×3.5jt, cap 106%) + komisi(1.25% on collected >100jt). Weights: omzet .45 / cashflow .25 / diskon .20 / NOO .10.
+- **AR KPI:** floor 3.8jt (pokok 3jt + ops 800rb). Komisi on CASH collected, bucket by aging-since-handover (1.5% / 2.5% / 3.5%), locked at first post-onboard payment. Probation bonuses + penalty flags.
+- **Customer tier (A/B/C/D):** loyalty signal computed from invoice COUNT in a trailing window (`CONFIG.CUST_TIER`, default 4 months: A≥11 · B 5–10 · C 2–4 · D 1). `computeCustomerTiers` (Sync.gs) stamps `custTierText` (`B · 7× · Rp45.000.000`) onto every invoice; shown as the **`Tier (4bln)`** column on Pool A/B, Tagihan Sales/Lain, To-Do, and Rute Penagihan, colour-coded by letter. **Display-only** — does NOT touch komisi/penalty/handover (softer penagihan is the human's call). Threshold over 4mo makes A rare; tune in CONFIG.
+- Full constants live in `CONFIG` (Code.gs). Salary calc note: one-time bonuses are added separately AFTER the monthly-floor × N multiply — never bundled into the floor.
+
+---
+
+## Three automation goals (the roadmap)
+
+1. **Faktur Coretax from Accurate invoice** — separate Node app `../rosh-faktur/` already
+   generates Coretax `TaxInvoiceBulk` XML from Accurate invoices. Polish backlog: faktur
+   ledger (dedup), PKP filter, TIN pre-validation, merge into the Sheet flow. *Coretax has
+   no open public POST API for taxpayers — realistic ceiling is validated bulk XML + the
+   portal import stays manual unless a PJAP is signed.*
+2. **Record customer payments from chat + bukti transfer** — NOT built. Needs write scope
+   (current OAuth is read-only: `sales_invoice_view customer_view sales_receipt_view`) + `sales-receipt/save.do`,
+   OCR of proof, invoice match, and a human-approve gate before posting. ⚠ Bro labeled it
+   "Pembayaran Pembelian" but source is customer chat → it's a **sales receipt**, not buy-side.
+   Confirm before building.
+3. **WA penagihan reminders** — ❌ REMOVED (2026-05-31). `Reminders.gs` deleted from script editor; WA menu items removed from `Code.gs`.
+
+---
+
+## Faktur PDF for penagihan (`Faktur.gs`) — BUILT 2026-06-02
+
+Sales/Ade need the ROSH faktur PDF when collecting. **Accurate's Open API has no print/PDF/share
+endpoint** (data-only), so we regenerate the faktur ourselves from `sales-invoice/detail.do` and drop
+a one-tap `📄 PDF` HYPERLINK column into **Pool A, Pool B, Tagihan Sales, Tagihan Lain**.
+
+- **DIRECT links + server-side generation (`fakturLinkFormula`, 2026-06-04):** the `📄 PDF` cell is a
+  DIRECT `drive.google.com/file/d/<id>/view` link when the PDF is cached (1-tap open), else **blank**
+  until a server-side pass generates it. Faktur is static per invoice → cached permanently in Drive
+  folder `ROSH Faktur PDF` (filename `<number>.pdf`); partial payments don't change it. Generation is
+  done by `generateFakturPdfs` / `catchUpFakturPdfs` / the daily trigger — all run AS THE OWNER
+  (Roshan), no browser. Run **Auto catch-up Faktur** once to drain the backlog, then **Run Full Sync**
+  so every open invoice shows a direct link; the daily trigger keeps new ones current.
+  - **Nightly generate = single-batch BY DESIGN (do not change to auto-catch-up).** The 03:00 trigger
+    is the BOUNDED `generateFakturPdfs` (≤5 min, max 80) — NOT `catchUpFakturPdfs`. Reason: owner is a
+    **consumer Gmail** → **90-min/day total trigger-runtime quota**; a long nightly catch-up (many
+    continuation batches) can exhaust it and starve/overlap the 04:00 prune + 05:00 sync. Daily NEW
+    invoices are few, so one bounded batch covers them; a rare spike just fills over the next day(s).
+    **`catchUpFakturPdfs` (menu "Auto catch-up Faktur") is MANUAL-ONLY** — for watched backlog drains.
+  - **⚠️ Generate-on-click via the web app is a DEAD END here — do not rebuild it.** Tried & failed
+    across many rounds (inline base64 → redirect-to-Drive → `&dbg=1`): the moment `doGet` touches Drive
+    during a click from a **multi-account** Google browser, Google serves its "Sorry, unable to open the
+    file" page at the `/exec` URL **before** our response renders. Confirmed with deployment on
+    Execute-as-**Me** + access **Anyone**, and even `&dbg=1` (a tiny text response) fails once `doGet` has
+    hit Drive. Bare `/exec` (no Drive touch) and single-account/incognito are fine — it's specifically
+    Drive-op-during-request × multi-account. So a top-level nav to an anyone-with-link Drive `/view` (the
+    direct link, no `/exec`) is the only reliable render. `doGet` stays for owner/manual + diagnostics.
+- **No new OAuth scope** — `sales_invoice_view` + `customer_view` already cover detail.do + bill address.
+  Did add the Google **Drive** scope (`appsscript.json`) for `DriveApp` → re-authorize the Apps Script
+  project (Google consent, not Accurate) after pushing.
+- **Static template data** lives in the `FAKTUR` const (company/address, VA BCA `15903614617`, BCA
+  `6560380435`, director Jonathan Owen, footer). Signature + logo PNGs are stored in Drive and
+  referenced by Script Properties `FAKTUR_SIGN_FILE_ID` / `FAKTUR_LOGO_FILE_ID` (base64-inlined at render).
+
+**One-time deploy:** ① upload signature+logo PNGs to Drive, run `setFakturAssets(signId, logoId)` from
+the editor · ② menu **ROSH Accurate ▸ Setup Faktur folder** · ③ **Deploy ▸ New deployment ▸ Web app**,
+Execute as **Me**, Access **Anyone** · ④ menu **Set Faktur web app URL** (paste `/exec`, or it
+auto-resolves via `ScriptApp.getService().getUrl()`) · ⑤ **Run Full Sync now** → links appear. Verify
+line-item field names first with `diagFakturFields(<invoiceId>)`. Generated PDFs are shared
+**anyone-with-link** (low sensitivity — same faktur the customer already gets).
+
+---
+
+## Flow Penagihan Fase 0 (manual di sheet, pra-Qontak) — BUILT 2026-06-04
+
+Fase 0 dari roadmap migrasi WhatsApp BSP/Mekari Qontak (proposal v3): **buktikan flow penagihan
+jalan manual di sheet dulu sebelum bayar Qontak.** Pure projection — no API, no new scope.
+Stages flow (relatif `daysPastDue`): H-1 reminder · Tahap 1 Deden H+3 · **H+7 STOP-SUPPLY** ·
+Tahap 2 Deden H+8–14 · handover Ade >H+14 (`handoverDate=dueDate+15`, **sudah cocok**) · Tahap 3
+Ade weekly + antrian kunjungan. Thresholds di `CONFIG` (`STOP_SUPPLY_DAYS 7`, `PENAGIHAN_WINDOW_MAX 14`,
+`DISPATCH.{SOLO_MIN 2.5jt, ZONE_MIN_STOPS 3, QUEUE_AGE_DAYS 21}`). Tiga deliverable, semua master-only:
+
+### ✉️ Pesan Penagihan (`Pesan.gs`) — group-by-customer
+Tab **`✉️ Pesan Penagihan`**. **1 pesan per pelanggan** menggabungkan semua faktur dalam window
+**H-1 → H+14** (`buildPenagihanBatch`). **Window-only**: faktur belum jatuh tempo (jauh dari H-1)
+TIDAK disebut; "gabung" hanya bila ≥2 faktur customer sama-sama di window. Bucket 4-touch
+(`_penagihanBucket`, **dipakai bersama** oleh To-Do section Penagihan via `buildDueReminders` → segmen
+konsisten): nada ikut faktur paling overdue: H-1 / H+3 Nudge / **H+7 Stop-supply (tegas + notice order ditahan)** / H+14 Terakhir;
+tier A/B di-soften; daftar faktur + total + instruksi bank (`FAKTUR`) + CTA "balas SUDAH" (set up window Qontak).
+Kolom **Pesan** (copy) + **📲 Kirim WA** (`_waLinkFormula` → `wa.me/<62…>?text=`, prefill, manual Send —
+bukan auto-send). `_waPhone` normalisasi `62…`. Tone di-model dari prototype yang Bro setujui.
+
+### ⛔ Stop Supply (HOLD) (`StopSupply.gs`)
+Tab **`⛔ Stop Supply (HOLD)`**. `buildStopSupply` = customer yang punya ≥1 invoice belum bayar
+**≥ H+7**. Flag-only — **Nathan tahan SO/order baru manual di Accurate** (OAuth read-only, sheet tak bisa
+tulis hold). Leverage utama flow. Kolom: Customer · Telp · Sales · Jml Invoice · Total · Umur Tertua · Tier.
+
+### 🗺️ Rute Penagihan +Tipe Dispatch (`Route.gs`)
+Kolom baru **`Tipe Dispatch`** (`_dispatchType`, prioritas Solo>Nearest>Rute>Antri): Solo (outstanding ≥2,5jt,
+kunjungi sendiri) · Nearest (umur antri >21 hr, wajib ikut rute terdekat) · Rute (zona ≥3 titik) · Antri (tunggu cluster).
+
+**Roadmap lanjut (di luar Fase 0):** Fase 1 pilot Qontak (shared inbox, kirim manual) → Fase 2 integrasi
+API (outbound 08:00 push template Utility + `doPost` webhook balasan→sheet, pakai pola web-app `doGet` Faktur)
+→ Fase 3 reaktivasi Marketing (cap budget) + strike counter. Qontak memecahkan auto-send + sensing balasan;
+Accurate tetap otak/sumber data.
+
+---
+
+## Rute Penagihan (`Route.gs`) — BUILT 2026-06-04
+
+Ade's weekly field drive list. Tab **`🗺️ Rute Penagihan`** (master + Ade's file; NOT Deden's),
+written in `fullSync` after Pool B. Aggregates Ade's open AR (Pool A + B, `outstanding > 0`)
+**by customer** (1 visit = 1 location), groups by zona, ranks zonas, orders stops.
+
+- **Zona priority** = `total outstanding × (1 + umur_tertua_hari × CONFIG.ROUTE.AGING_WEIGHT)`
+  (default 0.02) → many small-but-old tunggakan still float a zona up on accumulation. Side
+  panel "Prioritas Zona" ranks them; unzoned customers parked at the bottom.
+- **Zona (auto)** 🔴 = kecamatan parsed straight from the freeform address text (`_zonaFromAddress`,
+  regex on "Kecamatan X" / DKI city) — free + instant + reliable for ROSH's detailed addresses.
+  Geocode (`Maps.newGeocoder`) is the **fallback** for zona AND the source of **coordinates**.
+- **Stop ordering** = greedy nearest-neighbour from coords (Maps pin 🟡 wins; else geocoded coords).
+  No coords → appended by outstanding desc. Coords fill in progressively (geocode is capped +
+  time-budgeted + cached in `_GeoCache`; short `maps.app.goo.gl` pins resolved + cached in `_PinCache`).
+- **13-col schema:** 1 Zona🟡 2 Zona(auto)🔴 3 Urutan🔴 4 Customer🔴(KEY) 5 Alamat🔴 6 Pin Maps🟡
+  7 Outstanding🔴 8 Umur Tertua🔴 9 No.Telp🔴 10 Status Kunjungan🟡 11 Tgl Kunjungan🟡 12 Hasil🟡
+  13 Tier(4bln)🔴. 🟡 UPSERTED **by customer name** (`collectRouteYellow`, master↔Ade merge, Ade wins)
+  — same pattern as Pool tabs upserting by invoice number. 🔴 locked warning-only.
+- **No new Accurate scope.** First run uses the built-in **Maps service** (geocoder) + `UrlFetchApp`
+  → Google may prompt re-authorization (Google consent, not Accurate). Tune `CONFIG.ROUTE`
+  (AGING_WEIGHT / MAX_PIN_RESOLVE / MAX_GEOCODE). Clear `_GeoCache` / `_PinCache` to force refresh.
+
+---
+
+## Per-role access — separate Sheet files (BUILT 2026-06-02)
+
+Google Sheets can't hide tabs per-collaborator inside one file (protection only blocks *editing*;
+hidden tabs can be unhidden/copied). The KPI tabs expose take-home pay, so real isolation = **one
+Sheet file per person**, fed by the same sync:
+
+- **Master `Tracker Invoice`** (owner = Roshan, never shared to staff) — all tabs.
+- **Ade file** (`ROSH AR — Ade`, shared **Editor**) — Summary (AR-scoped) + Pool A + Pool B + KPI Matriks AR.
+- **Deden file** (`ROSH Tagihan — Deden`, shared **Viewer**) — Summary (Sales-scoped) + Tagihan Sales + KPI Matriks Sales.
+
+**How:** `fullSync` computes once, then writes to each file by swapping `TARGET_SS` (Sync.gs) — `_ss()`
+returns `TARGET_SS || master`, so every writer (incl. `uiSheet`/`orderTabs`) redirects with no rewrite.
+File ids live in Script Properties `ADE_SHEET_ID` / `DEDEN_SHEET_ID`.
+
+- **🟡 source of truth = Ade's file.** `collectPoolYellow([master, adeSS], …)` merges Channel/Hasil/
+  Tgl Follow-up/Bukti by invoice number (Ade's non-empty wins), then writes IDENTICAL 🟡 to both →
+  Ade edits in her file, master picks them up next sync (reconciles per run, not real-time).
+- **Salary isolation:** `writeThpAdeTab`/`writeThpSalesTab` only run for their own file; `writeSummaryTab(ctx, role)`
+  hides the other role's THP block (`'ade'` skips THP Sales, `'deden'` skips THP AR).
+- **🔴 lock is warning-only** (avoids the userinfo.email scope error) — Ade *can* override a 🔴 cell
+  past a popup, but the next sync overwrites it.
+
+**One-time setup:** edit the two Gmail addresses in `setupRoleSheetsOnce` → menu **ROSH Accurate ▸
+Setup role sheets (Ade/Deden)** (or Run it) → it creates + shares both files → run **Run Full Sync now**.
+
+---
+
+## Conventions
+
+- Credentials live in **Script Properties**, never in source or the sheet. Setup functions hold literals temporarily, then get wiped.
+- Money: `outstanding` = current balance (total − received), not original invoice total. Partial payments shrink amounts.
+- Reuse `Sync.gs` helpers (`fetchSalesInvoices`, `normalizeInvoice`, `fetchCustomerDetail`, `fmtDate`, `num`) — don't re-implement.
+- **Receipts come from ONE bulk sweep** (`buildReceiptsByInvoice` → `sales-receipt/list.do`, paged, indexed by invoice id; single-invoice receipts use `totalPayment`, multi-invoice fall back to `sales-receipt/detail.do` for per-line `paymentAmount` excl. PPh). `enrichReceipts` consumes that map — **do NOT revert to per-invoice `sales-invoice/detail.do`** (one call per paid invoice → "scales badly toward month-end"). Validated identical to the old path by `diagReceiptReconcile` (40/40, 0 diff). Requires the **`sales_receipt_view`** OAuth scope (added 2026-06-04 → `forceReauthorize` once). If receipt math ever looks off, re-run `diagReceiptReconcile`.
+- **Customer contacts are cached** in hidden sheet `_ContactCache` (`attachCustomerContacts`). Per-customer `detail.do` is time-budgeted (≤4 min) so a big first run never times out the whole sync — unfetched customers fill in over the next few syncs. Don't revert to fetching every customer every run (that 208-call loop hit the 6-min limit and aborted the writers). To rebuild contacts from scratch, clear the `_ContactCache` tab (or run the throwaway `clearCaches` helper).
+  - **Cache schema = `customerId | alamat | noTlp | noVa`.** `_contactCacheSheet` AUTO-MIGRATES an old 3-col cache (no `noVa` header) by wiping it once → rebuilds carrying each customer's Virtual Account.
+  - **Alamat + VA live only in `customer/detail.do`.** `customer/list.do` returns just `{id}` even with `fields` requested → the bulk layer contributes nothing; every contact needs detail.do. `_custAddress` (`billStreet`/`shipStreet` + wide fallback), `_custVa` (**`customerNoVa`** = customer's own VA), `_custPhone`. Layer-3 **re-fetches when a cached entry has phone but no `alamat`**. Verify field names with `diagCustomerFields()` (dumps full detail.do JSON).
+  - **VA per customer:** both the WA pesan (`Pesan.gs`, via `inv.noVa`) and the Faktur PDF (`Faktur.gs` `_fakturVa(d)` → embedded `customer.customerNoVa` else `customer/detail.do`) use the customer's own `customerNoVa`, NOT the static `FAKTUR.VA_BCA`. **`customerNoVa` stores only the 6-digit customer code; the full VA = `FAKTUR.VA_PREFIX` (`15903`) + code** via `_fullVaBca()` (guards double-prefix / already-full). e.g. code `648718` → `15903648718`. Pesan: no VA → line omitted (BCA `6560380435` still shown). Faktur: no VA → falls back to static `FAKTUR.VA_BCA` (formal doc always shows a VA). Cached faktur PDFs keep the old VA until the file in Drive `ROSH Faktur PDF` is deleted (rebuild).
+
+## Memory note
+Folder-level MEMORY.md is at the ROSH Finance root (one entry: salary calc method). Write to it only on Bro's explicit trigger ("remember this" etc.).

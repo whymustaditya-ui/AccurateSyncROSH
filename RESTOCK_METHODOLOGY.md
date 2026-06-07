@@ -253,14 +253,69 @@ Ini dirancang untuk pertumbuhan bertahap, dan beberapa sifatnya justru makin bag
 
 ---
 
-## 8. Rating
+## 8. Panduan tuning — gejala → knob
+
+Semua angka hidup di `CONFIG.RESTOCK` (Code.gs). **Aturan emas: ubah SATU knob, ±20–30%, amati 1–2
+minggu, baru lanjut.** Jangan geser banyak sekaligus — nanti nggak tahu mana yang ngefek.
+
+| Gejala yang kamu lihat | Knob | Arah | Efek |
+|---|---|---|---|
+| Order kebanyakan / cash kebakar | `CYCLE_DAYS`, `MAX_COVER_DAYS` | ↓ turunin | target stok lebih tipis |
+| Cash mau dijaga lebih ketat | `SERVICE_Z` | ↓ turunin | safety stock turun (risiko stockout naik) |
+| Sisihan opex kurang | `OPEX_BUFFER` | ↑ naikin | budget restock dari saldo bank mengecil |
+| Sering kehabisan / stockout | `SERVICE_Z` (tier ybs) | ↑ naikin | safety stock naik (A 1.96→2.33 = 98→99%) |
+| Pabrik nyatanya lebih lama dari 14 hr | `LEAD_TIME` | ↑ naikin | ROP naik, order lebih awal |
+| Supply makin random / tak terduga | `LT_CV` | ↑ naikin | safety stock nyerap variasi kedatangan |
+| Order kekecilan, kesering-seringan PO | `CYCLE_DAYS` | ↑ naikin | order lebih jarang tapi lebih besar |
+| Safety stock numpuk (ROP ketinggian) | `MAX_CV` | ↓ turunin | σ dibatasi lebih ketat |
+| Demand 1 SKU kegedean gara² 1 borongan | `WINSOR_PCT` | ↓ (mis 0.80) | trim one-time hit lebih agresif |
+| Demand kerasa under / SKU besar diabaikan | `WINSOR_PCT` → 1.0 | ↑ | matikan trim (cek dulu harvest "✓ lengkap") |
+| SKU naik daun di-over-order | `GROWTH_CAP` → 1.0 | ↓ | matikan proyeksi growth |
+| Tier numpuk di C/D atau semua A | `TIER_CUTOFFS` / `WEIGHT_*` | sesuaikan | geser ambang / bobot velocity vs penetrasi |
+| Budget kecepetan habis (TUNDA banyak) | `PO_BUDGET` / `PO_BUDGET_DEFAULT` | ↑ naikin | lebih banyak SKU jadi BELI |
+| Mau lihat SKU disetop/tanpa-demand lagi | `HIDE_INACTIVE` → false | — | tampilkan baris ⚪ |
+
+**Service level → Z** (buat `SERVICE_Z`): 85%→1.04 · 90%→1.28 · 95%→1.65 · 97.5%→1.96 · 99%→2.33.
+Makin tinggi = makin jarang stockout tapi makin banyak stok nganggur.
+
+---
+
+## 9. Audit asumsi & validasi
+
+Setiap angka bersandar pada asumsi. Ini ledger-nya + cara ngecek masih valid:
+
+| Asumsi | Status | Cara validasi |
+|---|---|---|
+| Stok Accurate = stok fisik | ⚠ **KRITIS** | **Stock opname** rutin; bandingin `availableToSell` vs hitungan gudang. GIGO. |
+| Lead time 14 hr (±30%) | ⚠ **tebakan** | Catat tgl PO → tgl barang datang utk 5–10 PO; rata-rata → set `LEAD_TIME`, sebaran → `LT_CV`. (`deliveryLeadTime` Accurate sering 0.) |
+| `vendorPrice` = harga beli terkini | sedang | Spot-check vs faktur beli terakhir; update di Accurate kalau naik |
+| Demand ~ normal (utk Z×σ) | lemah utk SKU lumpy | Sudah ditambal bound CV; SKU yang lakunya jarang cek manual |
+| One-time hit = pesanan abnormal besar | proxy | Winsorize berbasis *ukuran pesanan* — **nggak** nangkep pelanggan churn yang beli normal sekali lalu hilang |
+| Window 12 mgg mewakili demand kini | sedang | Cocokin "Demand/bln" vs feeling; perhatikan sel hijau (growth) |
+| On-order = `remainingQuantity` PO open | ✓ confirmed | sudah diverifikasi via diag PO |
+| Satuan CTN konsisten | ✓ confirmed | sudah dicek |
+
+**Playbook validasi bulanan (checklist):**
+1. **Stock opname** 2–3 SKU tier A → cocokin dengan kolom Stok. Kalau meleset → akar masalah di Accurate, bukan engine.
+2. **Realisasi lead time**: catat PO terakhir, kalau meleset >3 hari dari 14 → update `LEAD_TIME`.
+3. **Stockout bulan lalu**: ada SKU yang sempat kosong & rugi? Naikin `SERVICE_Z` tier itu.
+4. **Dead stock**: SKU 🟢 dengan Hari Cover >90 → kemungkinan overstock → turunin coverage / cek tier.
+5. **Total saran vs PO_BUDGET**: kalau berbulan-bulan kebutuhan > budget, itu sinyal **naikin modal**, bukan ngecilin order.
+
+**Catatan jujur (titik rapuh terbesar):** (a) akurasi stok Accurate — tanpa opname, semua salah; (b) lead
+time masih default 14, belum dikalibrasi data nyata; (c) demand lumpy + winsorize adalah pendekatan, bukan
+forecasting penuh. Engine ini **alat bantu keputusan**, angkanya titik-awal yang harus diadu sama akal sehat.
+
+---
+
+## 10. Rating
 
 | Dimensi | Nilai | Catatan |
 |---|---|---|
-| Akurasi demand (recency) | ★★★★☆ | EWMA solid; belum musiman |
+| Akurasi demand (recency) | ★★★★☆ | Winsorized + growth, robust thd one-time hit; belum musiman |
 | Penanganan supply acak | ★★★★☆ | Z×σ + LT_CV langsung ke pain; perlu data lead time nyata |
-| Skalabilitas (growth) | ★★★★★ | Percentile + EWMA + σ makin matang seiring tumbuh |
-| Disiplin cash | ★★★★☆ | RaR/biaya bagus; belum ada MOQ |
+| Skalabilitas (growth) | ★★★★★ | Percentile + winsorize + σ makin matang seiring tumbuh |
+| Disiplin cash | ★★★★☆ | RaR/biaya + buffer opex bagus; belum ada MOQ |
 | Anti double-order | ★★★★☆ | On-order PO masuk; tergantung field PO Accurate |
 | Ketahanan thd data kotor | ★★☆☆☆ | **Titik lemah** — bergantung total pada akurasi stok Accurate |
 | Transparansi / mudah dijelaskan | ★★★☆☆ | Lebih kuat tapi lebih kompleks dari v1 |
@@ -272,7 +327,7 @@ tapi di **kualitas data + godaan mempercayainya buta**.
 
 ---
 
-## 9. Roadmap upgrade (kalau mau naik kelas)
+## 11. Roadmap upgrade (kalau mau naik kelas)
 
 1. **MOQ / kelipatan order** per SKU (bulatkan saran ke minimum supplier).
 2. **Lead time nyata per supplier** dari riwayat PO (ganti default 14).

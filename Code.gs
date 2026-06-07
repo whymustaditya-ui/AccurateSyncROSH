@@ -147,7 +147,7 @@ const CONFIG = {
     // PO_BUDGET auto dari saldo bank: PO_BUDGET (manual) menang; kalau kosong → PO_BUDGET_PCT × saldo akun
     // yang namanya cocok BANK_MATCH (read-only, scope gl_account_view). Verifikasi dulu via diagCashBankFields().
     BANK_MATCH:     'jago',     // substring nama akun kas/bank di Accurate (case-insensitive)
-    OPEX_BUFFER:    30000000,   // sisihkan 30jt buat opex → budget auto = saldo Bank Jago − OPEX_BUFFER
+    PO_BUDGET_PCT:  0.5,        // pakai 50% saldo Bank Jago sbg budget restock (sisain buffer opex) — tunable
     PO_BUDGET_DEFAULT: 100000000 // fallback budget (Rp) kalau PO_BUDGET manual & saldo bank dua-duanya kosong
   },
 

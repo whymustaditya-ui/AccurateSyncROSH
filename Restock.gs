@@ -542,12 +542,17 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
     const ip = (onHand == null) ? null : onHand + onOrd;     // inventory position
     const coverNow = (ip != null && d > 0) ? Math.round(ip / d) : null;
 
+    // hitung saran order DULU, status ngikut: 🔴 cuma kalau beneran ada yang diorder (≥1).
+    // Menghindari kasus "Order Sekarang" tapi Saran Order 0 (Posisi pas di target tipis).
     let status, orderQty;
-    if (onHand == null)        { status = '⚪ Stok tak diketahui'; orderQty = null; }
-    else if (d <= 0)           { status = '⚪ Tanpa demand';       orderQty = 0; }
-    else if (ip <= ROP)        { status = '🔴 Order Sekarang';     orderQty = Math.max(0, Math.ceil(S - ip)); }
-    else if (ip <= ROP * 1.2)  { status = '🟡 Mendekati';          orderQty = 0; }
-    else                       { status = '🟢 Aman';               orderQty = 0; }
+    if (onHand == null)      { status = '⚪ Stok tak diketahui'; orderQty = null; }
+    else if (d <= 0)         { status = '⚪ Tanpa demand';       orderQty = 0; }
+    else {
+      orderQty = Math.max(0, Math.ceil(S - ip));
+      if (orderQty >= 1)           status = '🔴 Order Sekarang';
+      else if (ip <= ROP * 1.2)    status = '🟡 Mendekati';
+      else                         status = '🟢 Aman';
+    }
 
     const rar = totalOmzet > 0 ? g.omzet / totalOmzet : 0;
     const estCost = (orderQty && cost) ? Math.round(orderQty * cost) : 0;
@@ -606,8 +611,16 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
     return b.rar - a.rar;
   });
 
+  // sembunyikan SKU tak-aktif (⚪ Stok tak diketahui / Tanpa demand) — noise buat daftar beli.
+  // Tapi kalau SEMUA baris ⚪ (mis. item master belum ke-load), tetap tampilkan biar warningnya kelihatan.
+  let displayRows = rows;
+  if (R.HIDE_INACTIVE !== false) {
+    const active = rows.filter(function(x) { return !/^⚪/.test(x.status); });
+    if (active.length) displayRows = active;
+  }
+
   return {
-    rows: rows,
+    rows: displayRows,
     totals: { recommendSpend: recommendSpend, budget: budget, budgetSrc: budgetSrc, withinBudget: withinTotal, needCount: needers.length,
               harvestDone: invHarv, harvestTotal: invWin, harvestPending: (invWin - invHarv) },
     windowDays: windowDays, totalOmzet: totalOmzet, onOrderKnown: !!onOrderMap
@@ -730,6 +743,41 @@ function writeRestockTab(restock) {
     'diplafon MAX_COVER (A ' + R.MAX_COVER_DAYS.A + '/B ' + R.MAX_COVER_DAYS.B + '/C ' + R.MAX_COVER_DAYS.C + '/D ' + R.MAX_COVER_DAYS.D + ' hari) + σ di-cap CV ' + R.MAX_CV + ' → anti over-order demand lumpy. ' +
     'Posisi = Stok (availableToSell) + On Order (PO jalan). Posisi ≤ Reorder Point → 🔴 order (Target − Posisi). ' +
     'Tier ' + bandLabel + '. Satuan CTN. Prioritas Beli = Revenue-at-Risk ÷ harga beli; set "' + R.PO_BUDGET_PROP + '" (Rp) untuk cap modal.');
+  r += 1;
+
+  // ── CARA BACA (buat partner) ──
+  r = uiSection(sh, r, SPAN, '📖 CARA BACA — arti tiap kolom', UI.GOLD);
+  sh.getRange(r, 1, 1, SPAN).merge()
+    .setValue('Cara pakai cepat: lihat baris 🔴 "Order Sekarang" dengan label BELI di kolom terakhir — itu yang dibeli SEKARANG ' +
+              '(sudah diurut paling penting & masih muat budget). Label TUNDA = penting tapi lewat budget bulan ini, beli bulan depan.')
+    .setWrap(true).setVerticalAlignment('top').setFontStyle('italic').setFontColor(UI.INK).setBackground(UI.GREEN_SOFT);
+  sh.setRowHeight(r, 32); r += 1;
+
+  const guide = [
+    ['Tier (A–D)', 'Seberapa penting SKU buat bisnis. A = paling penting (laku banyak + dibeli banyak pelanggan beda), D = paling rendah. Tier tinggi sengaja distok lebih aman.'],
+    ['Skor', 'Angka 1–5 di balik Tier (gabungan 60% volume jual + 40% jumlah pelanggan). Makin tinggi makin penting.'],
+    ['Demand/bln', 'Perkiraan jual per bulan yang RUTIN — lonjakan dari pembeli sekali-beli (one-time) sudah dibuang biar nggak nyesatin. Sel HIJAU = penjualannya lagi tren NAIK.'],
+    ['Cust Unik', 'Berapa pelanggan BERBEDA yang beli SKU ini (6 bln). Banyak = kalau kosong, banyak hubungan pelanggan kena.'],
+    ['Stok', 'Sisa barang di gudang sekarang (CTN), dari Accurate.'],
+    ['On Order', 'Barang yang sudah di-PO ke supplier tapi BELUM datang.'],
+    ['Posisi', 'Stok + On Order = yang benar-benar kamu pegang/akan pegang. Dipakai buat keputusan, biar nggak dobel order.'],
+    ['Hari Cover', 'Posisi sekarang cukup buat berapa HARI lagi sebelum habis.'],
+    ['Target Stok', 'Idealnya distok sampai segini (CTN) — sudah hitung lama nunggu kirim + pengaman.'],
+    ['Reorder Pt', 'Batas bawah. Kalau Posisi ≤ angka ini → wajib order sekarang.'],
+    ['Status', '🔴 Order Sekarang (Posisi sudah ≤ Reorder Pt) · 🟡 Mendekati (siap-siap) · 🟢 Aman.'],
+    ['Saran Order', 'Jumlah CTN yang disarankan dibeli sekarang (= Target − Posisi).'],
+    ['Est. Biaya', 'Perkiraan biaya order itu = Saran Order × harga beli.'],
+    ['RaR % (Revenue at Risk)', 'Kontribusi SKU ini ke total omzet. Makin besar % → makin besar omzet yang HILANG kalau dia kosong → makin diprioritaskan saat modal terbatas.'],
+    ['Prioritas Beli', 'Urutan belanja saat budget terbatas: BELI #1, #2, … = beli sekarang (RaR per rupiah tertinggi dulu) sampai budget habis; TUNDA = tunggu bulan depan.'],
+    ['RINGKAS di atas', 'Total saran belanja = semua kebutuhan. Budget = batas modal (default Rp100jt). Belanja dalam budget = yang masuk hitungan BELI.']
+  ];
+  guide.forEach(function(g) {
+    sh.getRange(r, 1, 1, 2).merge().setValue(g[0]).setFontWeight('bold').setVerticalAlignment('top').setWrap(true);
+    sh.getRange(r, 3, 1, SPAN - 2).merge().setValue(g[1]).setWrap(true).setVerticalAlignment('top').setFontColor(UI.INK);
+    sh.setRowHeight(r, 30);
+    r += 1;
+  });
+  r += 1;
 
   sh.setColumnWidth(1, 90);  sh.setColumnWidth(2, 210); sh.setColumnWidth(3, 48);
   sh.setColumnWidth(4, 52);  sh.setColumnWidth(5, 72);  sh.setColumnWidth(6, 72);

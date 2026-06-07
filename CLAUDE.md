@@ -203,6 +203,9 @@ Tiga layer:
 **FAIL-SOFT:** `fullSync` bungkus refresh/onOrder/harvest/compute di try/catch (onOrder & item punya
 try sendiri). Sebelum scope di-grant tab tetap tampil tier+velocity (stok "⚪ tak diketahui" / on-order
 kosong), nyusul setelah re-consent. **Master-only** — JANGAN tambah ke blok writer Ade/Deden.
+Tab punya section **📖 CARA BACA** (glossary kolom buat partner). **`HIDE_INACTIVE`** (default true)
+sembunyikan SKU ⚪ "Stok tak diketahui" (disetop/tak di item master, mis. lini LIBRA) & "Tanpa demand"
+(kalau SEMUA ⚪ → tetap ditampilkan biar warning kelihatan).
 
 **Deploy v2:** ① push · ② scope `item_view`+`purchase_order_view`+`gl_account_view` (sudah di CONFIG) →
 `forceReauthorize()` · ③ menu **Diag item/purchase/cash-bank fields** → cek nama field di Log, sesuaikan

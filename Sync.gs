@@ -71,6 +71,21 @@ function fullSync() {
     const sales        = computeSalesKpi(invoices);
     const ar           = computeArKpi(invoices, onboard, today);
 
+    // Restock Engine (master data: SKU velocity dari line-item + stok/cost dari item master).
+    // FAIL-SOFT: refreshItemMaster bisa 403 sampai scope item_view di-grant (forceReauthorize) —
+    // jangan abort sync; harvest pakai sales_invoice_view yg sudah ada. Tab tampil tier/velocity
+    // dulu, stok on-hand nyusul setelah re-consent. Harvest time-budgeted (drain bertahap).
+    let restock = null;
+    try {
+      try { refreshItemMaster(); } catch (e) { Logger.log('Item master dilewati (cek scope item_view): ' + e.message); }
+      let onOrder = null;
+      try { onOrder = buildOnOrderByItem(today); } catch (e) { Logger.log('On-order PO dilewati (cek scope purchase_order_view): ' + e.message); }
+      let bankInfo = null;
+      try { bankInfo = pullBankBalance(); } catch (e) { Logger.log('Saldo bank dilewati (cek scope gl_account_view): ' + e.message); }
+      harvestSkuSales(invoices, today);
+      restock = computeRestock(invoices, today, onOrder, bankInfo);
+    } catch (e) { Logger.log('Restock dilewati: ' + e.message); }
+
     const ctx = { invoices: invoices, poolA: poolA, poolB: poolB,
                   invoiceSales: invoiceSales, sales: sales, ar: ar };
 
@@ -93,6 +108,7 @@ function fullSync() {
     writeTodoTab(dueReminders, followUps);    // 📌 daily action list
     writePesanTab(penagihanBatch);            // ✉️ pesan WA siap kirim, group-by-customer (master-only)
     writeStopSupplyTab(stopSupply);           // ⛔ daftar HOLD order (≥H+7) untuk Nathan (master-only)
+    if (restock) writeRestockTab(restock);    // 📦 Restock Engine — saran pembelian per SKU (master-only)
     writePoolTab(CONFIG.TABS.POOL_A, poolA, 'A', yA);
     writePoolTab(CONFIG.TABS.POOL_B, poolB, 'B', yB);
     writeRouteTab(routePlan, yR);             // 🗺️ Rute Penagihan

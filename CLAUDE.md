@@ -22,6 +22,7 @@ the versioned copies.
 | `Route.gs` | Rute Penagihan: aggregate Ade's open AR by customer, zona grouping (`Zona (auto)` from address-text regex `_zonaFromAddress`, geocode fallback + Ade override), zona priority (Σ Rp × umur), nearest-neighbour stop ordering from Maps pins / geocoded coords, `Tier (4bln)` + `Tipe Dispatch` (`_dispatchType`: Solo/Nearest/Rute/Antri) cols, `🗺️ Rute Penagihan` writer. Built-in Maps geocoder + `_PinCache`/`_GeoCache` |
 | `Pesan.gs` | Pesan Penagihan: ready-to-send WA messages **group-by-customer** (1 pesan gabung faktur window H-1→H+14) via `buildPenagihanBatch`. `_waPhone` normalize, `_penagihanMessageBatch` (tone per bucket H-1/H+3/H+7/H+14 + tier A/B soften + bank instr + CTA "balas SUDAH"), `_waLinkFormula` (wa.me prefill), `✉️ Pesan Penagihan` writer. Master-only |
 | `StopSupply.gs` | ⛔ Stop Supply (HOLD): `buildStopSupply` (customer dengan invoice ≥H+7 belum bayar), `writeStopSupplyTab`. Flag-only — Nathan tahan SO baru manual di Accurate (OAuth read-only). Master-only |
+| `Restock.gs` | 📦 Restock Engine (master-only) **v2**: SKU tier **percentile self-calibrating** (velocity 60% + penetration 40% → A/B/C/D) → reorder point **statistik** (demand recency-weighted EWMA + safety `Z[tier]×σ_LT`, lead-time per item) → order-up-to `ROP + d×cycle[tier]` → **inventory position = stok + on-order PO** → **cash-capped PO** (rank Revenue-at-Risk ÷ harga beli, `PO_BUDGET`). Hidden caches: `_ItemCache` (`refreshItemMaster` ← `item/list.do`: `availableToSell`/`vendorPrice`/`deliveryLeadTime`, scope **`item_view`**, skip `suspended`) + `_SkuSalesCache` (`harvestSkuSales` ← per-invoice `sales-invoice/detail.do`, time-budgeted, prune>window). On-order: `buildOnOrderByItem` ← `purchase-order/list+detail.do` (scope **`purchase_order_view`**, no cache). Budget `PO_BUDGET` manual atau auto `PO_BUDGET_PCT`×saldo Bank Jago (`pullBankBalance` ← `glaccount/list.do`, scope **`gl_account_view`**). Demand v3 winsorized+growth. `_demandStats`/`_percentileScore`/`computeRestock`/`writeRestockTab`/`diag{Item,Purchase,CashBank}Fields`. Const `CONFIG.RESTOCK` |
 | `Faktur.gs` | Faktur Penjualan PDF: `buildFakturHtml`→HTML→PDF, Drive cache, `terbilang`, `fakturLinkFormula` = **DIRECT Drive `/view` link if cached, else blank** (generation is server-side: `generateFakturPdfs`/`catchUpFakturPdfs`/daily trigger). `doGet` web app kept for owner/diag only — **generate-on-click via /exec is a dead end in multi-account browsers**, see Faktur section. setup/diag |
 | `Style.gs` / `Diag.gs` | Formatting helpers / diagnostics |
 | `SETUP.md` | Accurate sync setup |
@@ -155,6 +156,60 @@ written in `fullSync` after Pool B. Aggregates Ade's open AR (Pool A + B, `outst
 - **No new Accurate scope.** First run uses the built-in **Maps service** (geocoder) + `UrlFetchApp`
   → Google may prompt re-authorization (Google consent, not Accurate). Tune `CONFIG.ROUTE`
   (AGING_WEIGHT / MAX_PIN_RESOLVE / MAX_GEOCODE). Clear `_GeoCache` / `_PinCache` to force refresh.
+
+---
+
+## Restock Engine (`Restock.gs`) — BUILT 2026-06-07 · v2 2026-06-07
+
+Tujuan: restock berhenti pakai "feeling" → hindari overorder / overspend / kurang order, di
+tengah **supply acak** (pabrik telat random ~1–2 minggu). Tab **`📦 Restock Engine`** (master-only,
+`fullSync` blok master setelah Stop Supply). Diag konfirmasi data Accurate: `item/list.do` honor
+`fields` (stok=`availableToSell` CTN · cost=`vendorPrice` · `deliveryLeadTime` per item · skip `suspended`).
+Tiga layer:
+
+1. **Tier (importance)** — skor `WEIGHT_VELOCITY 0.6 × velocity + WEIGHT_PEN 0.4 × penetration` → A/B/C/D
+   (`TIER_CUTOFFS`). **`BAND_MODE='percentile'`** = self-calibrating (rank vs katalog ROSH sendiri via
+   `_percentileScore` + `PERCENTILE_CUTS` [.8/.6/.4/.2] → top 20%=5). `'absolute'` (`VELOCITY_BANDS`/
+   `PENETRATION_BANDS`) tinggal fallback. Window tier `WINDOW_MONTHS` 6 bln (stabil).
+2. **Kapan & berapa (reorder s,S statistik)** — demand harian `d` **"konsisten"** (`_demandStats` v3):
+   tiap pesanan di-**winsorize** ke persentil `WINSOR_PCT` 0.9 (buang one-time hit / pesanan abnormal besar)
+   → rata-rata harian winsorized → **proyeksi growth** (rate `GROWTH_RECENT_WEEKS` 4 mgg terakhir vs
+   sebelumnya, cuma NAIK, plafon `GROWTH_CAP` +25%). **BUKAN EWMA** (overreact ke batch terakhir → d meledak
+   6×; fix 2026-06-07). SKU baru dibagi hari sejak first-sale; fail-safe saat harvest belum lengkap. Safety
+   stock **statistik**: `SS = SERVICE_Z[tier] × σ_LT`, `σ_LT = √(LT·σ_daily² + d²·σ_LTdays²)` (`LT_CV` 0.3),
+   service level A~97.5%/B~95%/C~90%/D~85%. **σ di-bound `MIN_CV` 0.25–`MAX_CV` 1.25**. `ROP = d×LT + SS`;
+   lead time per item (`deliveryLeadTime`, fallback `LEAD_TIME` 14). **`S = ROP + d×CYCLE_DAYS[tier]`**
+   (LEAN A14/B10/C7/D5) **diplafon `MAX_COVER_DAYS`** (A35/B28/C21/D18 hari — posture tipis ~2–3 mgg, lead
+   time pendek). **Inventory position `IP = stok + on-order`**; IP ≤ ROP → 🔴 order `S−IP` · ≤ROP×1.2 → 🟡 · else 🟢.
+3. **Cash cap** — `RaR%` = omzet SKU ÷ total. Rank 🔴 by **RaR ÷ harga beli**, alokasi budget top-down →
+   `BELI #n` vs `TUNDA`. Budget resolusi: Script Property **`PO_BUDGET`** (manual) → else auto **saldo Bank
+   Jago − `OPEX_BUFFER` (30jt)** (`pullBankBalance` ← `glaccount/list.do`, scope **`glaccount_view`** —
+   CONFIRMED; belum di OAUTH_SCOPE, tambah manual kalau mau auto) → else **`PO_BUDGET_DEFAULT` 100jt** (dipakai sekarang).
+
+**Data:**
+- **`_ItemCache`** (`refreshItemMaster`, scope **`item_view`**) — stok/cost/leadTime per SKU; cheap, tiap
+  sync. Schema 6 kolom (`+leadTime`) — **auto-migrate** kalau header lama (pola `_contactCacheSheet`).
+- **`_SkuSalesCache`** (`harvestSkuSales`, `sales_invoice_view`) — line-item per invoice, time-budgeted
+  via `SYNC_START` (`SKU_HARVEST_BUDGET_MS` 5min/`SKU_HARVEST_MAX` 250) + sentinel + prune>window.
+  **Jangan ubah ke fetch-all-per-run.**
+- **On-order PO** (`buildOnOrderByItem`, scope **`purchase_order_view`**) — CONFIRMED via diag: `list.do`
+  honor `fields` + balikin **`percentShipped`** (open = `_poIsOpen`: <100, bebas-bahasa) → `detail.do` → Σ
+  **`remainingQuantity`** per line (barang belum datang, sudah hitung partial; fallback qty−received). Item
+  code `item.no`. Tanpa cache (PO terbuka sedikit), bounded (`PO_MAX_DETAIL` 150 / `PO_BUDGET_MS` 5,5min). **Anti double-order.**
+- **Saldo bank** (`pullBankBalance`, scope **`gl_account_view`**) — `glaccount/list.do`, ambil saldo akun yg
+  namanya cocok `BANK_MATCH` → PO_BUDGET auto (kalau Script Property PO_BUDGET kosong). Fail-soft; verifikasi
+  field via `diagCashBankFields()` (kandidat saldo `balance`/`currentBalance`/`endingBalance`).
+
+**FAIL-SOFT:** `fullSync` bungkus refresh/onOrder/harvest/compute di try/catch (onOrder & item punya
+try sendiri). Sebelum scope di-grant tab tetap tampil tier+velocity (stok "⚪ tak diketahui" / on-order
+kosong), nyusul setelah re-consent. **Master-only** — JANGAN tambah ke blok writer Ade/Deden.
+
+**Deploy v2:** ① push · ② scope `item_view`+`purchase_order_view`+`gl_account_view` (sudah di CONFIG) →
+`forceReauthorize()` · ③ menu **Diag item/purchase/cash-bank fields** → cek nama field di Log, sesuaikan
+`refreshItemMaster`/`buildOnOrderByItem`/`pullBankBalance` kalau beda · ④ **Refresh Restock** + **Run Full
+Sync** 2–3× sampai RINGKAS "Data line-item ✓ lengkap" · ⑤ budget pakai default 100jt; opsional `PO_BUDGET`
+manual atau auto saldo Bank Jago − `OPEX_BUFFER`. Semua angka tunable di `CONFIG.RESTOCK`; satuan CTN. Caveat: `deliveryLeadTime` mungkin 0
+(fallback 14); received-qty per line PO mungkin absen → fallback full qty; saldo bank endpoint perlu verifikasi diag.
 
 ---
 

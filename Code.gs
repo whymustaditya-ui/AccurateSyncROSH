@@ -26,7 +26,11 @@ const CONFIG = {
   // embedded, so this alone covers the full sync. If a call later returns 403,
   // add the SPECIFIC valid scope from account.accurate.id/developer/api-docs.do
   // (e.g. 'customer_view') — do NOT use 'sales_view'/'report_view' (not real scopes).
-  OAUTH_SCOPE:  'sales_invoice_view customer_view sales_receipt_view', // space-separated. customer_view → customer/list.do + detail.do (Alamat/No. Telp). sales_receipt_view → bulk sales-receipt/list.do (Penerimaan Penjualan, read-only). After changing scope you MUST run forceReauthorize() (authorize() reuses the old token).
+  OAUTH_SCOPE:  'sales_invoice_view customer_view sales_receipt_view item_view purchase_order_view', // space-separated.
+  // PO_BUDGET sekarang pakai default CONFIG.RESTOCK.PO_BUDGET_DEFAULT (100jt). Untuk auto dari saldo Bank
+  // Jago: scope yang BENAR = 'glaccount_view' (CONFIRMED dari api-docs: /api/glaccount/list.do + get-balance.do;
+  // 'gl_account_view' DITOLAK). Tambahkan ' glaccount_view' ke string scope di atas → forceReauthorize() →
+  // menu "Diag cash/bank fields", lalu pullBankBalance akan override default. Endpoint balance: get-balance.do. customer_view → customer/list.do + detail.do (Alamat/No. Telp). sales_receipt_view → bulk sales-receipt/list.do (Penerimaan Penjualan, read-only). item_view → item/list.do (stok on-hand + harga beli per SKU untuk Restock Engine, read-only). purchase_order_view → purchase-order/list+detail.do (barang on-order untuk inventory position Restock, read-only). After changing scope you MUST run forceReauthorize() (authorize() reuses the old token). NB kalau item/list.do balas 403, coba ganti item_view → product_view/inventory_view; purchase_order_view → purchase_view (nama scope beda antar build Accurate; cek account.accurate.id/developer/api-docs.do).
 
   // Per-request HMAC signature. The documented Open API flow needs ONLY
   // Bearer + X-Session-ID. Leave OFF unless your app registration explicitly
@@ -115,6 +119,38 @@ const CONFIG = {
     QUEUE_AGE_DAYS: 21        // umur antri (sejak handover) > 21 hari → WAJIB ikut rute terdekat
   },
 
+  // ── Restock Engine (Restock.gs) — SKU tiering + reorder point + cash-capped PO ──
+  // v2 (2026-06-07): demand recency-weighted (EWMA), safety stock statistik (Z×σ), banding
+  // percentile self-calibrating, inventory position = stok + on-order PO. Semua tunable di sini.
+  RESTOCK: {
+    WINDOW_MONTHS: 6,          // window tier (velocity + penetrasi) — stabil
+    RECENT_WEEKS:  12,         // window demand sizing (recency) — minggu terakhir
+    WINSOR_PCT:    0.90,       // winsorize: cap tiap pesanan di persentil ini → buang one-time hit (pesanan abnormal besar)
+    GROWTH_RECENT_WEEKS: 4,    // demand 4 mgg terakhir vs sebelumnya → deteksi tren
+    GROWTH_CAP:    1.25,       // proyeksi growth dibatasi (cuma NAIK, maks +25%) — anti over-extrapolate
+    EWMA_ALPHA:    0.4,        // (DEPRECATED — demand kini rata-rata winsorized + growth; lihat _demandStats)
+    MIN_CV:        0.25,       // lantai koef. variasi demand (SKU flat tetap dapat buffer)
+    MAX_CV:        1.25,       // PLAFON koef. variasi — demand B2B lumpy (batch) bikin σ meledak → cap di sini
+    LEAD_TIME:     14,         // hari PO→datang, fallback kalau item.deliveryLeadTime kosong
+    LT_CV:         0.30,       // variabilitas lead time (supply acak): σ_LT_hari = LT × LT_CV
+    WEIGHT_VELOCITY: 0.60,     // bobot velocity di skor tier
+    WEIGHT_PEN:      0.40,     // bobot penetrasi di skor tier
+    BAND_MODE: 'percentile',   // 'percentile' (self-calibrating) | 'absolute' (pakai *_BANDS)
+    PERCENTILE_CUTS: [0.80, 0.60, 0.40, 0.20],  // ≥cut → skor 5/4/3/2 · else 1 (top 20% = 5)
+    VELOCITY_BANDS:    [[500, 5], [300, 4], [150, 3], [50, 2], [0, 1]],  // fallback BAND_MODE='absolute'
+    PENETRATION_BANDS: [[30, 5], [20, 4], [10, 3], [5, 2], [0, 1]],      // (karton/bln · customer/window)
+    TIER_CUTOFFS:  { A: 4.5, B: 3.5, C: 2.5 },                  // skor → tier (else D)
+    SERVICE_Z:     { A: 1.96, B: 1.65, C: 1.28, D: 1.04 },      // service level z: A~97.5% … D~85%
+    CYCLE_DAYS:    { A: 14, B: 10, C: 7,  D: 5  },              // cycle stock di ATAS reorder point (LEAN ~2-3 mgg)
+    MAX_COVER_DAYS:{ A: 35, B: 28, C: 21, D: 18 },             // PLAFON keras target stok (hari) — posture tipis (lead time 1-2 mgg)
+    PO_BUDGET_PROP: 'PO_BUDGET',  // Script Property (Rp). Manual override; kalau kosong → auto dari Bank Jago (bawah)
+    // PO_BUDGET auto dari saldo bank: PO_BUDGET (manual) menang; kalau kosong → PO_BUDGET_PCT × saldo akun
+    // yang namanya cocok BANK_MATCH (read-only, scope gl_account_view). Verifikasi dulu via diagCashBankFields().
+    BANK_MATCH:     'jago',     // substring nama akun kas/bank di Accurate (case-insensitive)
+    OPEX_BUFFER:    30000000,   // sisihkan 30jt buat opex → budget auto = saldo Bank Jago − OPEX_BUFFER
+    PO_BUDGET_DEFAULT: 100000000 // fallback budget (Rp) kalau PO_BUDGET manual & saldo bank dua-duanya kosong
+  },
+
   // Sheet tab names (relabeled 2026-05-30; see TAB_MIGRATION for old→new in-place rename)
   TABS: {
     CARA_BACA:     '📖 Cara Baca',          // onboarding guide (static, rebuilt each sync)
@@ -129,6 +165,7 @@ const CONFIG = {
     INVOICE_SALES: '🧾 Tagihan Sales',       // unpaid & overdue ≤14d (still with Sales, pre-handover) — Deden & Dian only
     TAGIHAN_LAIN:  '🧾 Tagihan Lain',         // pre-handover unpaid for everyone NOT in SALES_FILTER (Nathan/partner, POS, others)
     SUMMARY:       '📋 Ringkasan',           // overview
+    RESTOCK:       '📦 Restock Engine',      // SKU tiering + reorder point + cash-capped PO (Restock.gs, master-only)
     HEALTH:        '📊 Business Health',     // strategic dashboard: AR aging, DSO, collection, trends (Health.gs, master-only)
     LOG:           '⚙️ Sync Log',
     TAGIHAN_ADE:   'Tagihan Ade'           // DEPRECATED → auto-deleted by fullSync (replaced by Pool A/B)
@@ -167,6 +204,11 @@ function onOpen() {
     .addItem('Prune Faktur PDFs (hapus lunas)', 'pruneFakturPdfs')
     .addItem('Set Faktur web app URL', 'setFakturWebAppUrl')
     .addItem('Clear Faktur PDF cache', 'clearFakturCache')
+    .addSeparator()
+    .addItem('Refresh Restock (item + SKU sales)', 'refreshSkuSalesNow')
+    .addItem('Diag item fields', 'diagItemFields')
+    .addItem('Diag purchase fields', 'diagPurchaseFields')
+    .addItem('Diag cash/bank fields', 'diagCashBankFields')
     .addSeparator()
     .addItem('Setup role sheets (Ade/Deden)', 'setupRoleSheetsOnce')
     .addToUi();

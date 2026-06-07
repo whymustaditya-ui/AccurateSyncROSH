@@ -81,7 +81,7 @@ function fullSync() {
       let onOrder = null;
       try { onOrder = buildOnOrderByItem(today); } catch (e) { Logger.log('On-order PO dilewati (cek scope purchase_order_view): ' + e.message); }
       let bankInfo = null;
-      try { bankInfo = pullBankBalance(); } catch (e) { Logger.log('Saldo bank dilewati (cek scope gl_account_view): ' + e.message); }
+      try { bankInfo = pullBankBalance(); } catch (e) { Logger.log('Saldo bank dilewati (cek scope glaccount_view): ' + e.message); }
       harvestSkuSales(invoices, today);
       restock = computeRestock(invoices, today, onOrder, bankInfo);
     } catch (e) { Logger.log('Restock dilewati: ' + e.message); }

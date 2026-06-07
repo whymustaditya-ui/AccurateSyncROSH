@@ -182,9 +182,20 @@ Tiga layer:
    (LEAN A14/B10/C7/D5) **diplafon `MAX_COVER_DAYS`** (A35/B28/C21/D18 hari — posture tipis ~2–3 mgg, lead
    time pendek). **Inventory position `IP = stok + on-order`**; IP ≤ ROP → 🔴 order `S−IP` · ≤ROP×1.2 → 🟡 · else 🟢.
 3. **Cash cap** — `RaR%` = omzet SKU ÷ total. Rank 🔴 by **RaR ÷ harga beli**, alokasi budget top-down →
-   `BELI #n` vs `TUNDA`. Budget resolusi: Script Property **`PO_BUDGET`** (manual) → else auto **saldo Bank
-   Jago − `OPEX_BUFFER` (30jt)** (`pullBankBalance` ← `glaccount/list.do`, scope **`glaccount_view`** —
-   CONFIRMED; belum di OAUTH_SCOPE, tambah manual kalau mau auto) → else **`PO_BUDGET_DEFAULT` 100jt** (dipakai sekarang).
+   `BELI #n` vs `TUNDA`. **Budget resolusi (2026-06-08, prioritas):** ① **cell `Budget restock (ketik →)` 🟡**
+   di RINGKAS tab — user KETIK angka di sheet (`_readRestockBudget` baca cell sebelum tab ditulis ulang, pola
+   upsert) → ② Script Property **`PO_BUDGET`** → ③ auto **total saldo Kas & Bank** (`pullBankBalance` JUMLAH akun
+   CASH_BANK yg namanya cocok `BANK_MATCH` `['bca roshan','jago']` ← `glaccount/list.do`, scope **`glaccount_view`**
+   CONFIRMED+granted) → ④ `PO_BUDGET_DEFAULT` 100jt. Cell editable dirender ulang tiap sync (info saldo Jago+BCA di
+   sampingnya); kosong → pakai fallback. **NB realita 2026-06: total cash cuma ~30jt (Jago 7jt + BCA 23jt) vs saran belanja ~99jt → restock didanai dari AR masuk, bukan cash; makanya cell manual jadi jalur utama.**
+   - **🛒 DAFTAR BELANJA + live re-rank (2026-06-08):** section **`🛒 DAFTAR BELANJA`** (di atas DAFTAR SKU) =
+     kartu belanja bersih — cuma SKU yg perlu order, urut prioritas, kolom Qty·Harga·Subtotal·Kumulatif·✅BELI/⏸TUNDA
+     + baris TOTAL BELANJA & sisa budget. Kolom pakai **merged block** (`_mblock`, `CART_BLOCKS`) krn col money DAFTAR SKU
+     sempit (### kalau tak merge). **Budget cuma mengubah alokasi BELI/TUNDA — qty/biaya/posisi tetap** → bisa dihitung dari
+     angka di sheet tanpa API. `computeRestock` return `cartItems` (needers urut prioritas, budget-independent); `_allocateCart`
+     greedy isi budget (skip overflow, item murah di belakang masih masuk). **Simple `onEdit(e)` → `_applyBudgetLive(sh)`**:
+     begitu user KETIK cell budget, daftar 🛒 + kolom Prioritas Beli + RINGKAS re-rank **INSTAN tanpa sync** (murni sheet,
+     no API; deteksi cart via marker `🛒`, Subtotal col12/Kumulatif col14/Aksi col16). setValues programatik tak memicu onEdit (no loop). Tetap apply otomatis di sync harian 05:00 juga.
 
 **Data:**
 - **`_ItemCache`** (`refreshItemMaster`, scope **`item_view`**) — stok/cost/leadTime per SKU; cheap, tiap
@@ -196,9 +207,10 @@ Tiga layer:
   honor `fields` + balikin **`percentShipped`** (open = `_poIsOpen`: <100, bebas-bahasa) → `detail.do` → Σ
   **`remainingQuantity`** per line (barang belum datang, sudah hitung partial; fallback qty−received). Item
   code `item.no`. Tanpa cache (PO terbuka sedikit), bounded (`PO_MAX_DETAIL` 150 / `PO_BUDGET_MS` 5,5min). **Anti double-order.**
-- **Saldo bank** (`pullBankBalance`, scope **`gl_account_view`**) — `glaccount/list.do`, ambil saldo akun yg
-  namanya cocok `BANK_MATCH` → PO_BUDGET auto (kalau Script Property PO_BUDGET kosong). Fail-soft; verifikasi
-  field via `diagCashBankFields()` (kandidat saldo `balance`/`currentBalance`/`endingBalance`).
+- **Saldo bank** (`pullBankBalance`, scope **`glaccount_view`**) — `glaccount/list.do`, **JUMLAH saldo semua akun
+  `accountType==='CASH_BANK'`** yg namanya cocok salah satu di `BANK_MATCH` (array, mis. `['bca roshan','jago']`)
+  → return `{total, accounts:[{name,balance}]}` (dipakai utk fallback budget + info saldo di RINGKAS). Field saldo
+  = **`balance`** (CONFIRMED diag 2026-06-08); guard CASH_BANK biar parent rollup "Setara Kas"/piutang tak ke-jumlah.
 
 **FAIL-SOFT:** `fullSync` bungkus refresh/onOrder/harvest/compute di try/catch (onOrder & item punya
 try sendiri). Sebelum scope di-grant tab tetap tampil tier+velocity (stok "⚪ tak diketahui" / on-order
@@ -207,11 +219,11 @@ Tab punya section **📖 CARA BACA** (glossary kolom buat partner). **`HIDE_INAC
 sembunyikan SKU ⚪ "Stok tak diketahui" (disetop/tak di item master, mis. lini LIBRA) & "Tanpa demand"
 (kalau SEMUA ⚪ → tetap ditampilkan biar warning kelihatan).
 
-**Deploy v2:** ① push · ② scope `item_view`+`purchase_order_view`+`gl_account_view` (sudah di CONFIG) →
-`forceReauthorize()` · ③ menu **Diag item/purchase/cash-bank fields** → cek nama field di Log, sesuaikan
-`refreshItemMaster`/`buildOnOrderByItem`/`pullBankBalance` kalau beda · ④ **Refresh Restock** + **Run Full
-Sync** 2–3× sampai RINGKAS "Data line-item ✓ lengkap" · ⑤ budget pakai default 100jt; opsional `PO_BUDGET`
-manual atau auto saldo Bank Jago − `OPEX_BUFFER`. Semua angka tunable di `CONFIG.RESTOCK`; satuan CTN. Caveat: `deliveryLeadTime` mungkin 0
+**Deploy v2:** ① push · ② scope `item_view`+`purchase_order_view`+`glaccount_view` (sudah di CONFIG) →
+`forceReauthorize()` · ③ menu **Diag item/purchase/cash-bank fields** → cek nama field di Log (saldo CONFIRMED `balance`),
+sesuaikan `refreshItemMaster`/`buildOnOrderByItem`/`pullBankBalance` kalau beda · ④ **Refresh Restock** + **Run Full
+Sync** 2–3× sampai RINGKAS "Data line-item ✓ lengkap" · ⑤ budget: **KETIK angka di cell `Budget restock (ketik →)` 🟡**
+di tab Restock (jalur utama); kosongkan → auto total Kas&Bank (BCA+Jago) → default 100jt. Semua angka tunable di `CONFIG.RESTOCK`; satuan CTN. Caveat: `deliveryLeadTime` mungkin 0
 (fallback 14); received-qty per line PO mungkin absen → fallback full qty; saldo bank endpoint perlu verifikasi diag.
 
 ---

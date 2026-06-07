@@ -26,7 +26,7 @@ const CONFIG = {
   // embedded, so this alone covers the full sync. If a call later returns 403,
   // add the SPECIFIC valid scope from account.accurate.id/developer/api-docs.do
   // (e.g. 'customer_view') — do NOT use 'sales_view'/'report_view' (not real scopes).
-  OAUTH_SCOPE:  'sales_invoice_view customer_view sales_receipt_view item_view purchase_order_view', // space-separated.
+  OAUTH_SCOPE:  'sales_invoice_view customer_view sales_receipt_view item_view purchase_order_view glaccount_view', // space-separated.
   // PO_BUDGET sekarang pakai default CONFIG.RESTOCK.PO_BUDGET_DEFAULT (100jt). Untuk auto dari saldo Bank
   // Jago: scope yang BENAR = 'glaccount_view' (CONFIRMED dari api-docs: /api/glaccount/list.do + get-balance.do;
   // 'gl_account_view' DITOLAK). Tambahkan ' glaccount_view' ke string scope di atas → forceReauthorize() →
@@ -143,12 +143,13 @@ const CONFIG = {
     SERVICE_Z:     { A: 1.96, B: 1.65, C: 1.28, D: 1.04 },      // service level z: A~97.5% … D~85%
     CYCLE_DAYS:    { A: 14, B: 10, C: 7,  D: 5  },              // cycle stock di ATAS reorder point (LEAN ~2-3 mgg)
     MAX_COVER_DAYS:{ A: 35, B: 28, C: 21, D: 18 },             // PLAFON keras target stok (hari) — posture tipis (lead time 1-2 mgg)
-    PO_BUDGET_PROP: 'PO_BUDGET',  // Script Property (Rp). Manual override; kalau kosong → auto dari Bank Jago (bawah)
-    // PO_BUDGET auto dari saldo bank: PO_BUDGET (manual) menang; kalau kosong → PO_BUDGET_PCT × saldo akun
-    // yang namanya cocok BANK_MATCH (read-only, scope gl_account_view). Verifikasi dulu via diagCashBankFields().
-    BANK_MATCH:     'jago',     // substring nama akun kas/bank di Accurate (case-insensitive)
-    PO_BUDGET_PCT:  0.5,        // pakai 50% saldo Bank Jago sbg budget restock (sisain buffer opex) — tunable
-    PO_BUDGET_DEFAULT: 100000000 // fallback budget (Rp) kalau PO_BUDGET manual & saldo bank dua-duanya kosong
+    PO_BUDGET_PROP: 'PO_BUDGET',  // Script Property (Rp). Override programatik; di bawah cell ketik-di-sheet.
+    // Resolusi budget restock (prioritas atas→bawah): ① cell "Budget restock (ketik →)" 🟡 di tab Restock
+    // (user ketik di sheet) → ② Script Property PO_BUDGET → ③ auto total saldo Kas & Bank (akun CASH_BANK
+    // yang namanya cocok BANK_MATCH, mis. BCA Roshan + Jago — read-only, scope glaccount_view) → ④ default.
+    // Verifikasi field saldo via diagCashBankFields() (field = `balance`, type = `accountType`=CASH_BANK).
+    BANK_MATCH:     ['bca roshan', 'jago'],  // substring nama akun kas/bank yg DIJUMLAH (case-insensitive); only CASH_BANK
+    PO_BUDGET_DEFAULT: 100000000 // fallback budget (Rp) kalau cell, Script Property, & saldo bank semua kosong
   },
 
   // Sheet tab names (relabeled 2026-05-30; see TAB_MIGRATION for old→new in-place rename)

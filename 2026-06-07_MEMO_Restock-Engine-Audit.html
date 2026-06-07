@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memo Partner — Restock Engine ROSH</title>
+<style>
+  :root{
+    --ink:#1a1d21; --ink2:#454b54; --muted:#7a828c;
+    --paper:#fbf9f5; --card:#ffffff; --line:#e7e2d8;
+    --brand:#1f6f5c; --brand-soft:#e3f1ec;
+    --gold:#b8893a; --gold-soft:#f7eedd;
+    --red:#c0392b; --red-soft:#fbe9e7;
+    --amber:#d98a00; --amber-soft:#fdf3e0;
+    --green:#2e7d4f; --green-soft:#e6f4ea;
+    --shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--paper);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.65;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:860px;margin:0 auto;padding:0 22px 90px}
+  /* HERO */
+  .hero{
+    background:linear-gradient(135deg,#1f6f5c 0%,#16513f 100%);
+    color:#fff;margin:0 -22px 0;padding:54px 22px 60px;position:relative;overflow:hidden;
+  }
+  .hero::after{content:"";position:absolute;right:-60px;top:-60px;width:260px;height:260px;
+    background:radial-gradient(circle,rgba(255,255,255,.10),transparent 70%);border-radius:50%}
+  .hero-inner{max-width:860px;margin:0 auto;position:relative;z-index:1}
+  .kicker{font-size:12px;letter-spacing:.18em;text-transform:uppercase;opacity:.78;font-weight:600}
+  .hero h1{font-size:34px;line-height:1.15;margin:12px 0 14px;font-weight:800;letter-spacing:-.02em}
+  .hero p{font-size:16px;color:#eaf4f0;opacity:1;margin:0;max-width:620px}
+  .hero-meta{margin-top:22px;display:flex;flex-wrap:wrap;gap:10px}
+  .chip{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);
+    padding:6px 13px;border-radius:30px;font-size:12.5px;font-weight:500}
+  /* SECTIONS */
+  section{margin-top:46px}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:700;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--brand);margin-bottom:6px}
+  .eyebrow .num{background:var(--brand);color:#fff;width:22px;height:22px;border-radius:6px;
+    display:grid;place-items:center;font-size:12px}
+  h2{font-size:25px;font-weight:800;letter-spacing:-.015em;margin:4px 0 14px}
+  h3{font-size:18px;font-weight:700;margin:0 0 8px}
+  p{color:var(--ink2);margin:0 0 14px}
+  .lead{font-size:17px;color:var(--ink)}
+  strong{color:var(--ink)}
+  /* CARDS */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:22px 24px;box-shadow:var(--shadow);margin-bottom:16px}
+  .grid{display:grid;gap:14px}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:680px){.g3,.g2{grid-template-columns:1fr}.hero h1{font-size:27px}}
+  .layer{position:relative;border-radius:16px;padding:22px;color:#fff;overflow:hidden;box-shadow:var(--shadow)}
+  .layer .tag{font-size:11px;letter-spacing:.14em;text-transform:uppercase;opacity:.85;font-weight:600}
+  .layer h3{color:#fff;font-size:19px;margin:6px 0 8px}
+  .layer p{color:rgba(255,255,255,.92);font-size:14px;margin:0}
+  .layer .q{font-size:14px;font-weight:700;margin-top:12px;background:rgba(255,255,255,.16);
+    display:inline-block;padding:5px 12px;border-radius:8px}
+  .L1{background:linear-gradient(140deg,#2c7a64,#1f5e4d)}
+  .L2{background:linear-gradient(140deg,#3a6ea5,#2b5180)}
+  .L3{background:linear-gradient(140deg,#b8893a,#8f6726)}
+  /* ANALOGY */
+  .analogy{background:var(--gold-soft);border:1px solid #ecdcbd;border-radius:16px;padding:22px 24px}
+  .analogy h3{color:var(--gold)}
+  /* STATUS LIGHTS */
+  .lights{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:8px}
+  @media(max-width:680px){.lights{grid-template-columns:1fr}}
+  .light{border-radius:14px;padding:18px;border:1px solid var(--line);background:#fff}
+  .dot{width:14px;height:14px;border-radius:50%;display:inline-block;margin-right:8px;vertical-align:middle}
+  .light h4{margin:0 0 6px;font-size:16px}
+  .light p{font-size:13.5px;margin:0}
+  .light.r{background:var(--red-soft);border-color:#f3cfca}
+  .light.a{background:var(--amber-soft);border-color:#f3dcae}
+  .light.g{background:var(--green-soft);border-color:#bfe3c9}
+  /* SCENARIOS */
+  .tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+  .tab{border:1px solid var(--line);background:#fff;padding:9px 15px;border-radius:30px;
+    font-size:13.5px;font-weight:600;cursor:pointer;color:var(--ink2);transition:.15s}
+  .tab:hover{border-color:var(--brand)}
+  .tab.active{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .scene{display:none;animation:fade .3s ease}
+  .scene.show{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .scene-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--line);
+    border-radius:14px;overflow:hidden}
+  @media(max-width:680px){.scene-grid{grid-template-columns:1fr}}
+  .scene-col{padding:18px 20px}
+  .scene-col.bad{background:var(--red-soft)}
+  .scene-col.good{background:var(--green-soft)}
+  .scene-col .lbl{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px}
+  .bad .lbl{color:var(--red)} .good .lbl{color:var(--green)}
+  .scene-col p{font-size:14px;margin:0;color:var(--ink2)}
+  .scene-head{font-size:15px;font-weight:700;margin-bottom:12px}
+  .scene-head .em{color:var(--brand)}
+  /* MORAL HAZARD */
+  .warn{border-left:4px solid var(--red);background:#fff;border-radius:0 12px 12px 0;
+    padding:14px 18px;margin-bottom:10px;box-shadow:var(--shadow)}
+  .warn h4{margin:0 0 4px;font-size:15px;color:var(--red)}
+  .warn p{margin:0;font-size:13.5px}
+  /* DUTY */
+  .duty{display:flex;gap:14px;align-items:flex-start;padding:14px 16px;background:#fff;
+    border:1px solid var(--line);border-radius:12px;margin-bottom:10px}
+  .duty .ic{flex:0 0 38px;height:38px;border-radius:10px;background:var(--brand-soft);color:var(--brand);
+    display:grid;place-items:center;font-size:18px;font-weight:800}
+  .duty h4{margin:0 0 3px;font-size:15px}
+  .duty p{margin:0;font-size:13.5px}
+  .duty .freq{font-size:11.5px;font-weight:700;color:var(--brand);text-transform:uppercase;letter-spacing:.06em}
+  /* RATING */
+  .rate-row{display:flex;align-items:center;justify-content:space-between;gap:14px;
+    padding:12px 0;border-bottom:1px dashed var(--line)}
+  .rate-row:last-child{border-bottom:none}
+  .rate-name{font-size:14.5px;font-weight:600;flex:1}
+  .stars{font-size:16px;letter-spacing:2px;color:var(--gold);white-space:nowrap}
+  .stars .off{color:#dcd6c8}
+  .overall{background:linear-gradient(135deg,#1f6f5c,#16513f);color:#fff;border-radius:16px;
+    padding:26px;text-align:center;margin-top:18px}
+  .overall .big{font-size:46px;font-weight:800;letter-spacing:-.02em}
+  .overall .stars-lg{font-size:26px;letter-spacing:4px;color:#ffd479;margin:4px 0 10px}
+  .overall p{color:rgba(255,255,255,.9);margin:0;font-size:14.5px;max-width:560px;margin:0 auto}
+  /* CHART */
+  .chart-note{font-size:12.5px;color:var(--muted);margin-top:8px;text-align:center}
+  /* BOTTOM */
+  .bottom{background:var(--ink);color:#fff;border-radius:18px;padding:30px 28px;margin-top:46px}
+  .bottom h2{color:#fff;margin-top:0}
+  .bottom p{color:rgba(255,255,255,.85)}
+  .bottom .pull{font-size:19px;font-weight:700;color:#fff;line-height:1.45;border-left:3px solid var(--gold);
+    padding-left:16px;margin:18px 0 0}
+  .foot{text-align:center;color:var(--muted);font-size:12.5px;margin-top:30px}
+  .pill{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;
+    background:var(--brand-soft);color:var(--brand);letter-spacing:.04em}
+  .big-num{font-size:13px;color:var(--muted)}
+  table.mini{width:100%;border-collapse:collapse;margin-top:8px;font-size:13.5px}
+  table.mini td{padding:7px 0;border-bottom:1px solid var(--line)}
+  table.mini td:last-child{text-align:right;font-weight:600;color:var(--ink)}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-inner">
+    <div class="kicker">Memo Internal · ROSH</div>
+    <h1>Restock Engine: Cara Kerja, Skenario &amp; Seberapa Boleh Dipercaya</h1>
+    <p>Catatan buat kamu yang pegang ops harian — supaya kita satu kepala soal kapan sistem ini bisa diandalkan, dan kapan justru otak kita yang harus ambil alih.</p>
+    <div class="hero-meta">
+      <span class="chip">📅 Diperbarui 8 Juni 2026</span>
+      <span class="chip">⚙️ Algoritma v2.1</span>
+      <span class="chip">🛒 Budget interaktif</span>
+      <span class="chip">📊 Rating: 4 dari 5</span>
+      <span class="chip">🤝 Dari: Bro</span>
+    </div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- INTRO -->
+  <section>
+    <p class="lead">Bro, ini ringkasan jujur soal "mesin restock" yang sekarang jalan otomatis tiap kita sync data Accurate. Tujuannya satu: <strong>kamu nggak perlu paham matematikanya, tapi kamu wajib paham logikanya</strong> — biar kalau angkanya kelihatan aneh, kamu tahu kapan harus percaya dan kapan harus tahan dulu.</p>
+  </section>
+
+  <!-- WHY -->
+  <section>
+    <div class="eyebrow"><span class="num">1</span> Kenapa kita bikin ini</div>
+    <h2>Selama ini order restock berbasis "feeling"</h2>
+    <p>Dan feeling punya 4 lubang yang sama-sama nguras uang:</p>
+    <div class="grid g2">
+      <div class="card" style="margin:0">
+        <h3>🪙 Overorder</h3>
+        <p style="margin:0">Beli kebanyakan → cash mati nganggur di gudang.</p>
+      </div>
+      <div class="card" style="margin:0">
+        <h3>💸 Salah prioritas</h3>
+        <p style="margin:0">Modal terbatas, malah beli barang yang salah duluan.</p>
+      </div>
+      <div class="card" style="margin:0">
+        <h3>📉 Kurang order</h3>
+        <p style="margin:0">Stockout → kehilangan omzet <em>dan</em> customer kabur.</p>
+      </div>
+      <div class="card" style="margin:0">
+        <h3>🎲 Supply acak</h3>
+        <p style="margin:0">Pabrik telat random 1–2 minggu, susah ditebak.</p>
+      </div>
+    </div>
+    <p style="margin-top:16px">Mesin ini memecah satu pertanyaan besar <strong>"beli apa, berapa, kapan?"</strong> jadi 3 pertanyaan kecil yang masing-masing dijawab pakai data Accurate — bukan tebakan. Semua hitungan jalan otomatis; <strong>satu-satunya tombol yang kamu pegang sendiri adalah budget belanja</strong> (lihat bagian "Daftar Belanja" di bawah) — dan itu memang harus keputusan kamu, bukan tebakan mesin.</p>
+  </section>
+
+  <!-- ANALOGY -->
+  <section>
+    <div class="analogy">
+      <h3>🧠 Bayangkan begini</h3>
+      <p style="margin:0;color:var(--ink2)">Mesin ini seperti <strong>asisten gudang yang nggak pernah tidur dan nggak pernah lupa</strong>. Tiap hari dia ngecek: SKU mana yang paling penting buat omzet, mana yang stoknya mau habis, dan kalau uang lagi pas-pasan, mana yang harus dibeli duluan. Dia kasih kamu <strong>daftar belanja siap pakai</strong>. Tapi dia tetap asisten — keputusan akhir di tangan kamu.</p>
+    </div>
+  </section>
+
+  <!-- 3 LAYERS -->
+  <section>
+    <div class="eyebrow"><span class="num">2</span> Cara kerja — 3 lapis</div>
+    <h2>Tiga pertanyaan, tiga jawaban berbasis data</h2>
+    <div class="grid g3">
+      <div class="layer L1">
+        <div class="tag">Lapis 1 · Tier</div>
+        <h3>Seberapa penting SKU ini?</h3>
+        <p>Dinilai dari <strong>volume penjualan</strong> (60%) + <strong>berapa banyak customer</strong> yang beli (40%). Diranking relatif ke katalog kita sendiri → kelas A, B, C, D.</p>
+        <div class="q">A = jaga tebal · D = tipis</div>
+      </div>
+      <div class="layer L2">
+        <div class="tag">Lapis 2 · Reorder Point</div>
+        <h3>Kapan &amp; berapa harus order?</h3>
+        <p>Hitung demand harian yang <strong>rutin</strong> (lonjakan sekali-beli dibuang), tambah <strong>stok pengaman</strong> yang otomatis menebal kalau supply makin acak.</p>
+        <div class="q">Titik aman → saat order</div>
+      </div>
+      <div class="layer L3">
+        <div class="tag">Lapis 3 · Cash Cap</div>
+        <h3>Modal pas-pasan, dahulukan mana?</h3>
+        <p>Ranking SKU by <strong>omzet terlindungi per rupiah modal</strong>. Beli dari atas sampai budget habis, sisanya <strong>TUNDA</strong>. Budget-nya <strong>kamu yang ketik</strong> di sheet — atau dibiarkan kosong, mesin pakai saldo bank.</p>
+        <div class="q">Uang ke yang paling worth</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STATUS LIGHTS -->
+  <section>
+    <div class="eyebrow"><span class="num">3</span> Yang kamu lihat tiap hari</div>
+    <h2>Lampu lalu lintas: 3 warna, 3 aksi</h2>
+    <p>Tiap SKU dikasih status. Logikanya pakai <strong>"inventory position"</strong> = stok di gudang <em>+</em> barang yang sudah di-PO. Jadi barang yang sudah dipesan nggak akan disuruh beli lagi (anti dobel-order).</p>
+    <div class="lights">
+      <div class="light r">
+        <h4><span class="dot" style="background:var(--red)"></span>Order Sekarang</h4>
+        <p>Stok sudah di titik aman atau di bawahnya. <strong>Beli sejumlah yang disaranin.</strong></p>
+      </div>
+      <div class="light a">
+        <h4><span class="dot" style="background:var(--amber)"></span>Mendekati</h4>
+        <p>Belum genting, tapi mulai menipis. <strong>Siap-siap, pantau.</strong></p>
+      </div>
+      <div class="light g">
+        <h4><span class="dot" style="background:var(--green)"></span>Aman</h4>
+        <p>Stok masih cukup. <strong>Diam, nggak usah beli.</strong></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- NEW: interactive budget + shopping list -->
+  <section>
+    <div class="eyebrow"><span class="num" style="background:var(--gold)">★</span> Baru · 8 Juni</div>
+    <h2>Daftar belanja yang nurut budget kamu — langsung jadi</h2>
+    <p>Update terbaru: mesin nggak cuma kasih tabel analisa, tapi sekarang <strong>menyodorkan kartu belanja siap eksekusi</strong> yang ngikut modal yang kamu tentuin sendiri. Tiga langkah:</p>
+
+    <div class="card" style="border-color:var(--gold);background:var(--gold-soft)">
+      <h3>🟡 1. Ketik budget kamu</h3>
+      <p style="margin:0">Di tab Restock ada satu <strong>cell kuning "Budget restock (ketik →)"</strong>. Isi angka modal yang realistis mau kamu keluarkan siklus ini (mis. 80.000.000). Dikosongin? Mesin otomatis pakai <strong>total saldo Kas &amp; Bank</strong> (BCA Roshan + Jago) yang ditarik langsung dari Accurate.</p>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>🛒 2. Muncul "Daftar Belanja"</h3>
+      <p style="margin:0 0 10px">Daftar bersih — cuma SKU yang harus dibeli, <strong>urut dari paling penting</strong>, lengkap jumlah karton, harga, subtotal, dan total berjalan. Tiap baris ditandai:</p>
+      <div class="lights" style="margin-top:6px">
+        <div class="light g"><h4><span class="dot" style="background:var(--green)"></span>✅ BELI</h4><p>Masuk budget — <strong>beli sekarang</strong>.</p></div>
+        <div class="light r"><h4><span class="dot" style="background:var(--red)"></span>⏸ TUNDA</h4><p>Penting tapi lewat budget — <strong>nyusul siklus depan</strong>.</p></div>
+      </div>
+      <p style="margin:12px 0 0">Di bawahnya: <strong>TOTAL BELANJA</strong> (uang yang keluar) + sisa budget. Tinggal baca atas ke bawah = itu yang dibeli, sekian karton, segitu duitnya.</p>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>⚡ 3. Ubah budget → daftar nyusun ulang seketika</h3>
+      <p style="margin:0">Geser angkanya jadi lebih kecil atau besar, daftarnya <strong>langsung re-rank sendiri</strong> — nggak perlu nunggu sync. Cocok buat main "kalau modal cuma 50jt, beli apa aja?" lawan "kalau 100jt, nambah apa?".</p>
+    </div>
+
+    <div class="warn" style="margin-top:16px"><h4>💡 Realita penting: cash ≠ budget</h4><p>Total cash kita sekarang cuma <strong>~30 jt</strong>, sementara kebutuhan ideal bisa tembus <strong>~99 jt</strong>. Artinya restock kita sebagian besar didanai dari <strong>tagihan yang masuk (AR)</strong>, bukan saldo bank. Jadi angka yang kamu ketik itu <strong>keputusan kamu</strong> soal berapa yang aman dikeluarkan minggu ini — bukan sekadar isi rekening.</p></div>
+  </section>
+
+  <!-- SCENARIOS -->
+  <section>
+    <div class="eyebrow"><span class="num">4</span> Skenario nyata</div>
+    <h2>Mesin lama (feeling) vs Mesin baru</h2>
+    <p>Pilih situasi, lihat bedanya:</p>
+    <div class="tabs">
+      <div class="tab active" data-s="0">🎲 Pabrik telat datang</div>
+      <div class="tab" data-s="1">📦 1 customer borong jumbo</div>
+      <div class="tab" data-s="2">💰 Modal lagi tipis</div>
+      <div class="tab" data-s="3">🚀 SKU lagi naik daun</div>
+    </div>
+
+    <div class="scene show" data-scene="0">
+      <div class="scene-head">Situasi: <span class="em">pabrik yang biasanya 14 hari, kali ini molor jadi 21 hari.</span></div>
+      <div class="scene-grid">
+        <div class="scene-col bad"><div class="lbl">❌ Cara lama</div><p>Stok pengaman dipukul rata "sekian hari". Pas pabrik telat, stok keburu habis → stockout → customer pindah ke kompetitor.</p></div>
+        <div class="scene-col good"><div class="lbl">✓ Mesin baru</div><p>Stok pengaman dihitung dari <strong>seberapa sering pabrik meleset</strong>. Makin acak supply-nya, buffer makin tebal otomatis. Telat 7 hari masih ketutup.</p></div>
+      </div>
+    </div>
+
+    <div class="scene" data-scene="1">
+      <div class="scene-head">Situasi: <span class="em">satu customer tiba-tiba pesan 1 SKU dalam jumlah jumbo, sekali doang.</span></div>
+      <div class="scene-grid">
+        <div class="scene-col bad"><div class="lbl">❌ Cara lama (versi awal)</div><p>Sistem panik: "wah demand naik 6×!" → langsung saranin order ratusan karton. Contoh nyata: OTG60 sempat disaranin <strong>575 CTN</strong> padahal jualan cuma ~48/bln.</p></div>
+        <div class="scene-col good"><div class="lbl">✓ Mesin baru</div><p>Pesanan jumbo "abnormal" itu <strong>dipangkas ke ukuran normal</strong> dulu (winsorize). Jadi demand yang dibaca = pola rutin, bukan ke-trigger 1 borongan. Order tetap wajar.</p></div>
+      </div>
+    </div>
+
+    <div class="scene" data-scene="2">
+      <div class="scene-head">Situasi: <span class="em">10 SKU butuh restock, tapi cash cuma cukup buat 6.</span></div>
+      <div class="scene-grid">
+        <div class="scene-col bad"><div class="lbl">❌ Cara lama</div><p>Beli yang "kebetulan keinget duluan" atau yang paling sering ditanya. Uang habis di SKU kecil, SKU penyumbang omzet utama malah kosong.</p></div>
+        <div class="scene-col good"><div class="lbl">✓ Mesin baru</div><p>Ranking by <strong>omzet-terlindungi per rupiah</strong>. Uang mengalir ke SKU yang melindungi omzet paling besar per modal. Sisanya ditandai <strong>TUNDA</strong>, nyusul bulan depan ngikut cash.</p></div>
+      </div>
+    </div>
+
+    <div class="scene" data-scene="3">
+      <div class="scene-head">Situasi: <span class="em">sebuah SKU 4 minggu terakhir penjualannya naik konsisten.</span></div>
+      <div class="scene-grid">
+        <div class="scene-col bad"><div class="lbl">❌ Cara lama</div><p>Rata-rata datar telat nyadar. Pas kita ngeh tren naik, stok udah keburu sering kosong di bulan-bulan emas.</p></div>
+        <div class="scene-col good"><div class="lbl">✓ Mesin baru</div><p>Tren naik kedeteksi → demand dinaikkan otomatis (maks +25%, biar nggak kebablasan). SKU-nya <strong>ditandai sel hijau</strong> di tab — itu sinyal buat kamu cek manual.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CHART: buffer adapts -->
+  <section>
+    <div class="card">
+      <h3>📈 Kenapa stok pengaman beda-beda tiap SKU</h3>
+      <p style="font-size:14px">Mesin nggak kasih buffer sama rata. SKU yang penjualannya <strong>stabil</strong> dapat buffer tipis (hemat cash). SKU yang <strong>naik-turun</strong> atau supply-nya acak dapat buffer tebal (jaga jangan kosong). Ilustrasi:</p>
+      <svg viewBox="0 0 600 220" style="width:100%;height:auto" xmlns="http://www.w3.org/2000/svg">
+        <!-- baseline -->
+        <line x1="50" y1="180" x2="580" y2="180" stroke="#e7e2d8" stroke-width="1"/>
+        <text x="50" y="205" font-size="12" fill="#7a828c">SKU stabil</text>
+        <text x="240" y="205" font-size="12" fill="#7a828c">SKU naik-turun</text>
+        <text x="430" y="205" font-size="12" fill="#7a828c">Supply acak + lumpy</text>
+        <!-- bar group 1 -->
+        <rect x="70" y="120" width="60" height="60" rx="4" fill="#2c7a64"/>
+        <rect x="70" y="95" width="60" height="25" rx="4" fill="#b8893a" opacity=".85"/>
+        <text x="100" y="85" font-size="11" fill="#454b54" text-anchor="middle">buffer tipis</text>
+        <!-- bar group 2 -->
+        <rect x="260" y="120" width="60" height="60" rx="4" fill="#2c7a64"/>
+        <rect x="260" y="70" width="60" height="50" rx="4" fill="#b8893a" opacity=".85"/>
+        <text x="290" y="60" font-size="11" fill="#454b54" text-anchor="middle">buffer sedang</text>
+        <!-- bar group 3 -->
+        <rect x="450" y="120" width="60" height="60" rx="4" fill="#2c7a64"/>
+        <rect x="450" y="40" width="60" height="80" rx="4" fill="#b8893a" opacity=".85"/>
+        <text x="480" y="30" font-size="11" fill="#454b54" text-anchor="middle">buffer tebal</text>
+        <!-- legend -->
+        <rect x="50" y="0" width="12" height="12" rx="2" fill="#2c7a64"/>
+        <text x="68" y="10" font-size="11" fill="#454b54">demand rutin</text>
+        <rect x="170" y="0" width="12" height="12" rx="2" fill="#b8893a" opacity=".85"/>
+        <text x="188" y="10" font-size="11" fill="#454b54">stok pengaman (otomatis menyesuaikan)</text>
+      </svg>
+      <div class="chart-note">Buffer ditebal-tipiskan otomatis dari volatilitas penjualan nyata + ketidakpastian kedatangan barang. Tapi ada plafon, jadi nggak meledak jadi stok 10 bulan.</div>
+    </div>
+  </section>
+
+  <!-- MORAL HAZARD -->
+  <section>
+    <div class="eyebrow"><span class="num">5</span> ⚠️ Bagian paling penting</div>
+    <h2>Cara sistem ini bisa menyesatkan kita</h2>
+    <p>Justru karena angkanya kelihatan rapi dan "pintar", sistem ini berbahaya kalau dipercaya buta. Baca ini berulang:</p>
+
+    <div class="warn"><h4>1. Jebakan autopilot</h4><p>Ini <strong>alat bantu keputusan, bukan pengambil keputusan</strong>. Saran order tetap harus lewat akal sehat kamu — info pasar, rumor harga bahan, promo — hal yang nggak ada di data.</p></div>
+    <div class="warn"><h4>2. Akurasi stok = fondasi segalanya</h4><p>Kalau stok di Accurate beda sama fisik gudang, <strong>semua saran salah</strong>. Mesin "yakin" padahal inputnya bolong. Ini risiko #1. Stock opname rutin <strong>wajib</strong> — nggak bisa digantikan mesin.</p></div>
+    <div class="warn"><h4>3. Angka bisa "dimainkan"</h4><p>Siapa pun yang bisa edit Accurate (stok, harga beli, status PO) bisa — sengaja atau nggak — menggeser rekomendasi. Perlu kontrol akses + sesekali cross-check.</p></div>
+    <div class="warn"><h4>4. Tier itu relatif, bukan rapor kesehatan bisnis</h4><p>Akan <strong>selalu ada SKU "Tier A"</strong> walau semua SKU lagi lesu. Tier jawab "mana yang relatif penting", bukan "apakah bisnis lagi sehat". Jangan campur aduk.</p></div>
+    <div class="warn"><h4>5. "ORDER 578 CTN" itu titik awal, bukan vonis</h4><p>Begitu lihat angka besar, otak nempel ke situ (anchoring). Perlakukan sebagai titik awal negosiasi dengan realita — bukan kebenaran mutlak.</p></div>
+    <div class="warn"><h4>6. Lead time masih tebakan (14 hari)</h4><p>Kalau aslinya pabrik 21 hari, sistem akan <strong>telat sistemik</strong>. Begitu kita punya catatan PO nyata, lead time-nya wajib dikalibrasi.</p></div>
+  </section>
+
+  <!-- DUTIES -->
+  <section>
+    <div class="eyebrow"><span class="num">6</span> Tugas kamu</div>
+    <h2>Yang mesin TIDAK bisa lakukan sendiri</h2>
+    <p>Mesin jalan otomatis, tapi 4 hal ini cuma bisa kamu yang pegang. Tanpa ini, mesinnya pelan-pelan jadi ngaco:</p>
+
+    <div class="duty"><div class="ic">📋</div><div><div class="freq">Bulanan</div><h4>Stock opname 2–3 SKU Tier A</h4><p>Cocokin hitungan fisik gudang vs angka di sistem. Kalau meleset, akar masalahnya di Accurate — bukan di mesin.</p></div></div>
+    <div class="duty"><div class="ic">⏱️</div><div><div class="freq">Tiap PO datang</div><h4>Catat tanggal PO → tanggal barang sampai</h4><p>Kumpulin 5–10 PO. Dari sini kita kalibrasi lead time asli per supplier, ganti tebakan 14 hari.</p></div></div>
+    <div class="duty"><div class="ic">🟢</div><div><div class="freq">Saat muncul</div><h4>Cek manual SKU bersel hijau</h4><p>Sel hijau = mesin nebak SKU lagi tumbuh. Itu <strong>sinyal buat dicek</strong>, bukan kebenaran. Pastikan bukan lonjakan sesaat.</p></div></div>
+    <div class="duty"><div class="ic">📈</div><div><div class="freq">Tiap bulan</div><h4>Pantau total saran belanja vs budget</h4><p>Kalau berbulan-bulan kebutuhan &gt; budget, itu sinyal <strong>"saatnya naik modal"</strong> — bukan ngecilin order.</p></div></div>
+  </section>
+
+  <!-- RATING -->
+  <section>
+    <div class="eyebrow"><span class="num">7</span> Rating jujur</div>
+    <h2>Skor per dimensi</h2>
+    <div class="card">
+      <div class="rate-row"><span class="rate-name">Akurasi demand (baca tren terkini)</span><span class="stars">★★★★<span class="off">★</span></span></div>
+      <div class="rate-row"><span class="rate-name">Penanganan supply acak</span><span class="stars">★★★★<span class="off">★</span></span></div>
+      <div class="rate-row"><span class="rate-name">Skalabilitas saat bisnis tumbuh</span><span class="stars">★★★★★</span></div>
+      <div class="rate-row"><span class="rate-name">Disiplin cash</span><span class="stars">★★★★<span class="off">★</span></span></div>
+      <div class="rate-row"><span class="rate-name">Anti dobel-order</span><span class="stars">★★★★<span class="off">★</span></span></div>
+      <div class="rate-row"><span class="rate-name">Ketahanan terhadap data kotor</span><span class="stars">★★<span class="off">★★★</span></span></div>
+      <div class="rate-row"><span class="rate-name">Transparansi / gampang dijelaskan</span><span class="stars">★★★<span class="off">★★</span></span></div>
+    </div>
+    <div class="overall">
+      <div class="stars-lg">★★★★☆</div>
+      <div class="big">4 / 5</div>
+      <p>Alat bantu keputusan yang kuat dan makin matang seiring bisnis tumbuh — <strong>bukan autopilot</strong>. Naik ke 4,5–5 begitu: (a) stock opname rutin bikin input bersih, (b) lead time dikalibrasi data nyata, (c) ada aturan minimum order + faktor musiman. Risiko terbesar bukan di matematikanya — tapi di kualitas data &amp; godaan mempercayainya buta.</p>
+    </div>
+  </section>
+
+  <!-- ROADMAP -->
+  <section>
+    <div class="eyebrow"><span class="num">8</span> Ke depan</div>
+    <h2>Kalau mau naik kelas</h2>
+    <div class="card">
+      <table class="mini">
+        <tr><td>Minimum order / kelipatan pallet per SKU</td><td><span class="pill">prioritas</span></td></tr>
+        <tr><td>Lead time nyata per supplier dari riwayat PO</td><td><span class="pill">prioritas</span></td></tr>
+        <tr><td>Faktor musiman (mis. lonjakan Lebaran)</td><td><span class="pill">nanti</span></td></tr>
+        <tr><td>Ranking pakai margin (bukan omzet)</td><td><span class="pill">nanti</span></td></tr>
+        <tr><td>Alert otomatis "saatnya naik modal"</td><td><span class="pill">nanti</span></td></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- BOTTOM LINE -->
+  <div class="bottom">
+    <h2>Intinya buat kamu</h2>
+    <p>Mesin ini ngangkat beban "mikir restock dari nol" — dia kasih daftar belanja yang udah dihitung dari data, lengkap dengan prioritas saat cash tipis. Itu solid dan bakal makin pinter seiring waktu.</p>
+    <p>Tapi dia cuma sebagus data yang kita kasih. <strong>Dua hal yang nggak boleh kamu skip: stock opname rutin, dan catat tanggal PO datang.</strong> Itu yang bikin mesinnya tetap jujur.</p>
+    <div class="pull">"Risikonya bukan di matematikanya — tapi di godaan mempercayainya buta. Anggap angkanya titik awal, bukan vonis."</div>
+  </div>
+
+  <div class="foot">
+    ROSH Finance · Memo internal · Disusun 7 Juni 2026 · Diperbarui 8 Juni 2026 (budget interaktif + 🛒 Daftar Belanja) · Restock Engine algoritma v2.1<br>
+    Semua parameter bisa dikalibrasi di <code>CONFIG.RESTOCK</code> — kalibrasi, jangan percaya buta.
+  </div>
+
+</div>
+
+<script>
+  document.querySelectorAll('.tab').forEach(function(t){
+    t.addEventListener('click',function(){
+      var i=this.getAttribute('data-s');
+      document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+      this.classList.add('active');
+      document.querySelectorAll('.scene').forEach(function(s){
+        s.classList.toggle('show', s.getAttribute('data-scene')===i);
+      });
+    });
+  });
+</script>
+</body>
+</html>

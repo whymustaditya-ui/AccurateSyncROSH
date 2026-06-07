@@ -313,31 +313,56 @@ function buildOnOrderByItem(today) {
 // Field bervariasi → verifikasi diagCashBankFields() dulu. Return {name, balance} | null.
 // ─────────────────────────────────────────────────────────────────────────────
 function pullBankBalance() {
-  const match = String((CONFIG.RESTOCK && CONFIG.RESTOCK.BANK_MATCH) || '').toLowerCase();
-  if (!match) return null;
+  const cfg = (CONFIG.RESTOCK && CONFIG.RESTOCK.BANK_MATCH) || [];
+  const matches = (Array.isArray(cfg) ? cfg : [cfg])
+    .map(function(s) { return String(s).toLowerCase(); }).filter(Boolean);
+  if (!matches.length) return null;
   const fields = ['id', 'no', 'name', 'accountType', 'balance'].join(',');
-  let page = 1, best = null;
+  let page = 1; const accounts = [];
   while (true) {
     const res = accApi('/accurate/api/glaccount/list.do',
       { 'sp.page': page, 'sp.pageSize': 100, 'fields': fields });
     const rows = (res && res.d) || [];
     rows.forEach(function(r) {
+      if (String(r.accountType || '').toUpperCase() !== 'CASH_BANK') return;  // HANYA kas/bank — jangan jumlah piutang/persediaan/parent rollup non-cash
       const nm = String(r.name || '').toLowerCase();
-      if (nm.indexOf(match) < 0) return;
+      if (!matches.some(function(m) { return nm.indexOf(m) >= 0; })) return;
       const bal = (r.balance != null) ? num(r.balance)
                 : (r.currentBalance != null) ? num(r.currentBalance)
                 : (r.endingBalance != null) ? num(r.endingBalance) : null;
       if (bal == null) return;
-      if (best == null || bal > best.balance) best = { name: r.name, balance: bal };  // pilih saldo terbesar yg cocok
+      accounts.push({ name: r.name, balance: bal });   // JUMLAHKAN semua akun yang cocok (BCA Roshan + Jago)
     });
     const pc = (res && res.sp && res.sp.pageCount) ? res.sp.pageCount : 1;
     if (page >= pc || rows.length === 0) break;
     page++;
     if (page > 50) break;
   }
-  if (best) Logger.log('Saldo bank "' + best.name + '": ' + best.balance);
-  else Logger.log('Akun bank "' + match + '" tidak ketemu / saldo kosong di glaccount/list.do');
-  return best;
+  if (!accounts.length) { Logger.log('Akun bank cocok (' + matches.join('/') + ') tidak ketemu di glaccount/list.do'); return null; }
+  const total = accounts.reduce(function(s, a) { return s + a.balance; }, 0);
+  Logger.log('Saldo kas/bank: ' + accounts.map(function(a) { return a.name + '=' + a.balance; }).join(', ') + ' → total ' + total);
+  return { total: total, accounts: accounts };
+}
+
+// Baca cell budget manual yang diketik user di tab Restock (master). Dipanggil SEBELUM
+// tab ditulis ulang (pola upsert) → angka yang diketik bertahan antar sync. Return Rp | null.
+function _readRestockBudget() {
+  try {
+    const sh = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.TABS.RESTOCK);
+    if (!sh) return null;
+    const last = Math.min(sh.getLastRow(), 20);
+    if (last < 1) return null;
+    const vals = sh.getRange(1, 1, last, 2).getValues();
+    for (let i = 0; i < vals.length; i++) {
+      if (!/^Budget restock \(ketik/i.test(String(vals[i][0]))) continue;
+      const v = vals[i][1];
+      if (v === '' || v == null) return null;
+      if (typeof v === 'number') return v > 0 ? v : null;
+      const digits = String(v).replace(/[^0-9]/g, '');   // "80.000.000" / "Rp80jt" → ambil digit saja
+      return digits ? Number(digits) : null;
+    }
+  } catch (e) { Logger.log('Baca budget manual gagal: ' + e.message); }
+  return null;
 }
 
 // DIAG — konfirmasi endpoint + field saldo kas/bank SEBELUM andalkan PO_BUDGET auto.
@@ -374,6 +399,29 @@ function _restockTier(s, c) {
   if (s >= c.B) return 'B';
   if (s >= c.C) return 'C';
   return 'D';
+}
+// Alokasi cash-cap: items SUDAH urut prioritas (RaR÷biaya). Greedy isi budget — item yang
+// overflow di-skip (TUNDA), item lebih murah di belakang masih bisa masuk. Return tiap item
+// + {beli, cumAfter} (cumAfter = total komit setelah item ini; cuma naik saat BELI). budget
+// 0/null → semua BELI (tanpa cap). Dipakai bareng writeRestockTab + onEdit live re-rank.
+// Tulis 1 block (merge col c1..c2) + isi nilai. Return range utk chaining format.
+function _mblock(sh, row, c1, c2, value) {
+  const rng = sh.getRange(row, c1, 1, c2 - c1 + 1);
+  if (c2 > c1) rng.merge();
+  rng.setValue(value).setVerticalAlignment('middle');
+  return rng;
+}
+function _allocateCart(items, budget) {
+  let cum = 0;
+  return items.map(function(x) {
+    const cost = num(x.estCost);
+    let beli;
+    if (!budget) { beli = true; cum += cost; }
+    else if (cum + cost <= budget) { beli = true; cum += cost; }
+    else beli = false;
+    return { no: x.no, name: x.name, qty: x.qty != null ? x.qty : x.orderQty,
+             cost: x.cost, estCost: cost, beli: beli, cumAfter: cum };
+  });
 }
 // Skor 1–5 percentile (self-calibrating). sortedAsc = semua nilai katalog urut naik;
 // cuts desc (mis. [.8,.6,.4,.2]) → top 20%→5, 60–80%→4, …, bottom 20%→1.
@@ -566,18 +614,20 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
   });
 
   // 5) cash rank di antara SKU yang perlu order — Revenue-at-Risk per rupiah biaya.
-  // Budget: Script Property PO_BUDGET (manual) menang; kalau kosong → PO_BUDGET_PCT × saldo Bank Jago.
+  // Budget (prioritas): ① cell ketik di sheet → ② Script Property PO_BUDGET → ③ total Kas&Bank (BCA+Jago) → ④ default.
+  const manualCell = _readRestockBudget();
   const budgetRaw = _props().getProperty(R.PO_BUDGET_PROP);
-  let budget = budgetRaw ? num(budgetRaw) : 0;
-  let budgetSrc = budget ? 'manual (Script Property)' : '';
-  if (!budget && bankInfo && bankInfo.balance > 0) {
-    const buf = R.OPEX_BUFFER || 0;
-    budget = Math.max(0, Math.round(bankInfo.balance - buf));
-    budgetSrc = 'saldo ' + bankInfo.name + ' (' + rupiah(bankInfo.balance) + ') − opex ' + rupiah(buf);
-  }
-  if (!budget && R.PO_BUDGET_DEFAULT) {        // fallback terakhir: default CONFIG
-    budget = R.PO_BUDGET_DEFAULT;
-    budgetSrc = 'default CONFIG';
+  let budget = 0, budgetSrc = '';
+  if (manualCell && manualCell > 0) {
+    budget = manualCell; budgetSrc = 'manual (ketik di sheet)';
+  } else if (budgetRaw && num(budgetRaw) > 0) {
+    budget = num(budgetRaw); budgetSrc = 'manual (Script Property PO_BUDGET)';
+  } else if (bankInfo && bankInfo.total > 0) {
+    budget = Math.round(bankInfo.total);
+    budgetSrc = 'auto saldo Kas & Bank (' +
+      bankInfo.accounts.map(function(a) { return a.name; }).join(' + ') + ')';
+  } else if (R.PO_BUDGET_DEFAULT) {            // fallback terakhir: default CONFIG
+    budget = R.PO_BUDGET_DEFAULT; budgetSrc = 'default CONFIG';
   }
   const needers = rows.filter(function(x) { return x.orderQty && x.orderQty > 0; })
     .sort(function(a, b) {
@@ -593,6 +643,10 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
     else { x.buyRank = 'TUNDA'; }
   });
   const recommendSpend = needers.reduce(function(s, x) { return s + x.estCost; }, 0);
+  // daftar belanja (urut prioritas, budget-independent) — dirender sbg section 🛒 + dipakai onEdit live.
+  const cartItems = needers.map(function(x) {
+    return { no: x.no, name: x.name, qty: x.orderQty, cost: x.cost, estCost: x.estCost };
+  });
 
   // coverage harvest: berapa invoice dalam window yang line-item-nya sudah ketarik. Kalau
   // belum 100%, qty/demand under-count → angka BELUM final (surface ke RINGKAS sbg warning).
@@ -621,9 +675,12 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
 
   return {
     rows: displayRows,
-    totals: { recommendSpend: recommendSpend, budget: budget, budgetSrc: budgetSrc, withinBudget: withinTotal, needCount: needers.length,
+    totals: { recommendSpend: recommendSpend, budget: budget, budgetSrc: budgetSrc, manualBudget: manualCell,
+              withinBudget: withinTotal, needCount: needers.length,
               harvestDone: invHarv, harvestTotal: invWin, harvestPending: (invWin - invHarv) },
-    windowDays: windowDays, totalOmzet: totalOmzet, onOrderKnown: !!onOrderMap
+    windowDays: windowDays, totalOmzet: totalOmzet, onOrderKnown: !!onOrderMap,
+    bankAccounts: (bankInfo && bankInfo.accounts) || null,
+    cartItems: cartItems
   };
 }
 
@@ -655,20 +712,82 @@ function writeRestockTab(restock) {
         ? '⚠ ' + t.harvestDone + '/' + t.harvestTotal + ' invoice ketarik — ' + t.harvestPending +
           ' BELUM. Angka belum final, Run Full Sync lagi sampai lengkap'
         : '✓ lengkap (' + t.harvestTotal + ' invoice)');
-  const ringkas = [
-    ['Data line-item (harvest)', dataStatus],
-    ['SKU perlu order', String(t.needCount || 0)],
-    ['Total saran belanja', rupiah(t.recommendSpend || 0)],
-    ['Budget restock', budget ? (rupiah(budget) + '  ·  ' + (t.budgetSrc || '')) : '— belum ada (set PO_BUDGET / saldo Bank Jago kosong) → tampil semua, urut RaR'],
-    ['Belanja dalam budget', budget ? rupiah(t.withinBudget || 0) : '—'],
-    ['On-order PO', (restock && restock.onOrderKnown) ? 'Dihitung (posisi = stok + PO jalan)' : '⚠ belum (cek scope purchase_order_view)']
-  ];
-  ringkas.forEach(function(row) {
-    sh.getRange(r, 1, 1, 4).setValues([[row[0], row[1], '', '']]).setVerticalAlignment('middle');
+  const accounts = (restock && restock.bankAccounts) || [];
+  const saldoTotal = accounts.reduce(function(s, a) { return s + a.balance; }, 0);
+  const saldoStr = accounts.length
+    ? accounts.map(function(a) { return a.name + ' ' + rupiah(a.balance); }).join(' + ') + ' = ' + rupiah(saldoTotal)
+    : '⚠ saldo bank belum ketarik (cek scope glaccount_view → forceReauthorize)';
+
+  const writeRow = function(label, value) {
+    sh.getRange(r, 1, 1, 4).setValues([[label, value, '', '']]).setVerticalAlignment('middle');
     sh.getRange(r, 1).setFontWeight('bold');
     sh.getRange(r, 2).setFontColor(UI.NOTE);
     r += 1;
+  };
+
+  writeRow('Data line-item (harvest)', dataStatus);
+  writeRow('SKU perlu order', String(t.needCount || 0));
+  writeRow('Total saran belanja', rupiah(t.recommendSpend || 0));
+
+  // Budget restock — CELL EDITABLE 🟡 (user ketik), info saldo Kas&Bank di sampingnya.
+  sh.getRange(r, 1).setValue('Budget restock (ketik →)').setFontWeight('bold').setVerticalAlignment('middle');
+  const inputCell = sh.getRange(r, 2);
+  inputCell.setValue((t.manualBudget && t.manualBudget > 0) ? t.manualBudget : '')
+    .setBackground(UI.T_AMBER).setFontWeight('bold').setHorizontalAlignment('right')
+    .setNumberFormat('#,##0').setBorder(true, true, true, true, false, false);
+  sh.getRange(r, 3, 1, 10).merge()                                  // lebar (col3-12) + no-wrap → 1 baris, row tak melar
+    .setValue('Kosongkan → auto pakai saldo: ' + saldoStr)
+    .setFontColor(UI.NOTE).setWrap(false).setVerticalAlignment('middle');
+  sh.setRowHeight(r, 22);
+  r += 1;
+
+  writeRow('Budget dipakai', budget
+    ? (rupiah(budget) + '  ·  ' + (t.budgetSrc || ''))
+    : '— belum ada → tampil semua SKU, urut RaR');
+  writeRow('Belanja dalam budget', budget ? rupiah(t.withinBudget || 0) : '—');
+  writeRow('On-order PO', (restock && restock.onOrderKnown) ? 'Dihitung (posisi = stok + PO jalan)' : '⚠ belum (cek scope purchase_order_view)');
+  r += 1;
+
+  // ── 🛒 DAFTAR BELANJA (kartu belanja sesuai budget) ──
+  // Kolom pakai MERGED block (col money sempit di DAFTAR SKU → ### kalau tak di-merge).
+  // Block: [1]# · [2]SKU · [3-7]Nama · [8-9]Qty · [10-11]Harga · [12-13]Subtotal · [14-15]Kumulatif · [16-17]Aksi.
+  r = uiSection(sh, r, SPAN, '🛒 DAFTAR BELANJA — beli ini, segini, urut prioritas (ikut budget di atas)', UI.GOLD);
+  const CART_BLOCKS = [[1, 1], [2, 2], [3, 7], [8, 9], [10, 11], [12, 13], [14, 15], [16, 17]];
+  const cartHdr = ['#', 'SKU', 'Nama', 'Qty (CTN)', 'Harga/CTN', 'Subtotal', 'Kumulatif', 'Aksi'];
+  CART_BLOCKS.forEach(function(b, j) {
+    _mblock(sh, r, b[0], b[1], cartHdr[j]).setBackground(UI.INK).setFontColor(UI.WHITE)
+      .setFontWeight('bold').setVerticalAlignment('middle');
   });
+  r += 1;
+  const cartStart = r;
+  const allocated = _allocateCart((restock && restock.cartItems) || [], budget);
+  if (!allocated.length) {
+    sh.getRange(r, 1, 1, SPAN).merge()
+      .setValue('Tidak ada SKU yang perlu diorder sekarang (semua 🟢 Aman / stok belum diketahui).')
+      .setFontColor(UI.NOTE).setFontStyle('italic');
+    r += 1;
+  } else {
+    allocated.forEach(function(x, i) {
+      const row = cartStart + i;
+      _mblock(sh, row, 1, 1, i + 1).setHorizontalAlignment('center');
+      _mblock(sh, row, 2, 2, x.no);
+      _mblock(sh, row, 3, 7, x.name);
+      _mblock(sh, row, 8, 9, x.qty).setNumberFormat('#,##0').setHorizontalAlignment('right');
+      _mblock(sh, row, 10, 11, x.cost || '').setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
+      _mblock(sh, row, 12, 13, x.estCost || '').setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
+      _mblock(sh, row, 14, 15, x.beli ? x.cumAfter : '').setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
+      _mblock(sh, row, 16, 17, x.beli ? '✅ BELI' : '⏸ TUNDA')
+        .setBackground(x.beli ? UI.T_GREEN : UI.T_RED).setFontWeight('bold').setHorizontalAlignment('center');
+    });
+    r = cartStart + allocated.length;
+    const totalBeli = allocated.reduce(function(s, x) { return s + (x.beli ? x.estCost : 0); }, 0);
+    _mblock(sh, r, 1, 11, 'TOTAL BELANJA (yang ✅ BELI)').setFontWeight('bold').setHorizontalAlignment('right');
+    _mblock(sh, r, 12, 13, totalBeli).setNumberFormat('"Rp"#,##0').setFontWeight('bold')
+      .setBackground(UI.T_GREEN).setHorizontalAlignment('right');
+    _mblock(sh, r, 14, 17, budget ? ('sisa budget ' + rupiah(Math.max(0, budget - totalBeli))) : 'budget tak diset → semua BELI')
+      .setFontColor(UI.NOTE);
+    r += 1;
+  }
   r += 1;
 
   // ── DAFTAR SKU ──
@@ -748,8 +867,9 @@ function writeRestockTab(restock) {
   // ── CARA BACA (buat partner) ──
   r = uiSection(sh, r, SPAN, '📖 CARA BACA — arti tiap kolom', UI.GOLD);
   sh.getRange(r, 1, 1, SPAN).merge()
-    .setValue('Cara pakai cepat: lihat baris 🔴 "Order Sekarang" dengan label BELI di kolom terakhir — itu yang dibeli SEKARANG ' +
-              '(sudah diurut paling penting & masih muat budget). Label TUNDA = penting tapi lewat budget bulan ini, beli bulan depan.')
+    .setValue('Cara pakai cepat: KETIK budget di cell kuning "Budget restock (ketik →)" di atas → daftar 🛒 DAFTAR BELANJA ' +
+              'langsung nge-update sendiri. Baris ✅ BELI = beli SEKARANG (sudah urut paling penting, total ≤ budget); ⏸ TUNDA = ' +
+              'penting tapi lewat budget, beli berikutnya. Kolom TOTAL BELANJA = uang yang dikeluarkan + sisa budget.')
     .setWrap(true).setVerticalAlignment('top').setFontStyle('italic').setFontColor(UI.INK).setBackground(UI.GREEN_SOFT);
   sh.setRowHeight(r, 32); r += 1;
 
@@ -769,7 +889,7 @@ function writeRestockTab(restock) {
     ['Est. Biaya', 'Perkiraan biaya order itu = Saran Order × harga beli.'],
     ['RaR % (Revenue at Risk)', 'Kontribusi SKU ini ke total omzet. Makin besar % → makin besar omzet yang HILANG kalau dia kosong → makin diprioritaskan saat modal terbatas.'],
     ['Prioritas Beli', 'Urutan belanja saat budget terbatas: BELI #1, #2, … = beli sekarang (RaR per rupiah tertinggi dulu) sampai budget habis; TUNDA = tunggu bulan depan.'],
-    ['RINGKAS di atas', 'Total saran belanja = semua kebutuhan. Budget = batas modal (default Rp100jt). Belanja dalam budget = yang masuk hitungan BELI.']
+    ['RINGKAS di atas', 'Total saran belanja = semua kebutuhan. Budget restock (ketik →) = KETIK angka modal di cell kuning itu (mis. 80000000) → langsung jadi batas belanja siklus ini; kosongkan = otomatis pakai total saldo Kas & Bank (BCA Roshan + Jago, tampil di sampingnya). Belanja dalam budget = yang masuk hitungan BELI sampai budget habis.']
   ];
   guide.forEach(function(g) {
     sh.getRange(r, 1, 1, 2).merge().setValue(g[0]).setFontWeight('bold').setVerticalAlignment('top').setWrap(true);
@@ -785,7 +905,7 @@ function writeRestockTab(restock) {
   sh.setColumnWidth(10, 72); sh.setColumnWidth(11, 88); sh.setColumnWidth(12, 86);
   sh.setColumnWidth(13, 130); sh.setColumnWidth(14, 88); sh.setColumnWidth(15, 105);
   sh.setColumnWidth(16, 64); sh.setColumnWidth(17, 115);
-  sh.setFrozenRows(dataStart - 1);
+  sh.setFrozenRows(2);   // pin banner saja (RINGKAS + 🛒 cart sekarang di atas DAFTAR SKU)
   return sh;
 }
 
@@ -802,7 +922,7 @@ function refreshSkuSalesNow() {
   let onOrder = null;
   try { onOrder = buildOnOrderByItem(today); } catch (e) { Logger.log('On-order dilewati (cek scope purchase_order_view): ' + e.message); }
   let bankInfo = null;
-  try { bankInfo = pullBankBalance(); } catch (e) { Logger.log('Saldo bank dilewati (cek scope gl_account_view): ' + e.message); }
+  try { bankInfo = pullBankBalance(); } catch (e) { Logger.log('Saldo bank dilewati (cek scope glaccount_view): ' + e.message); }
   harvestSkuSales(invoices, today);
   const rk = computeRestock(invoices, today, onOrder, bankInfo);
   writeRestockTab(rk);
@@ -810,6 +930,86 @@ function refreshSkuSalesNow() {
     SpreadsheetApp.getUi().alert('Restock diperbarui — cek tab ' + CONFIG.TABS.RESTOCK +
       '.\nKalau masih ada SKU "stok tak diketahui" atau line-item belum lengkap, jalankan lagi (harvest bertahap).');
   } catch (e) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LIVE BUDGET — simple onEdit trigger. Begitu user KETIK di cell "Budget restock (ketik →)",
+// daftar 🛒 + Prioritas Beli langsung re-rank TANPA sync (murni hitung di sheet, no API).
+// Budget cuma mempengaruhi alokasi BELI/TUNDA — qty/biaya/posisi tidak berubah → aman dihitung
+// dari angka yang sudah ada di sheet. setValues programatik TIDAK memicu onEdit (no loop).
+// ─────────────────────────────────────────────────────────────────────────────
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    const sh = e.range.getSheet();
+    if (!sh || sh.getName() !== CONFIG.TABS.RESTOCK) return;
+    if (e.range.getColumn() !== 2 || e.range.getNumRows() !== 1) return;
+    const label = String(sh.getRange(e.range.getRow(), 1).getValue() || '');
+    if (!/^Budget restock \(ketik/i.test(label)) return;       // bukan cell budget → abaikan
+    _applyBudgetLive(sh);
+  } catch (err) { /* onEdit tak boleh melempar */ }
+}
+
+// Re-rank daftar belanja dari isi sheet pakai budget terbaru. Dipanggil onEdit (live) — no API.
+function _applyBudgetLive(sh) {
+  const last = sh.getLastRow();
+  if (last < 2) return;
+  const colA = sh.getRange(1, 1, last, 1).getValues().map(function(r) { return String(r[0]); });
+  const findRow = function(re) { for (let i = 0; i < colA.length; i++) { if (re.test(colA[i])) return i + 1; } return 0; };
+  const digits = function(v) { return (typeof v === 'number') ? v : (Number(String(v).replace(/[^0-9]/g, '')) || 0); };
+
+  // budget: cell ketik; kalau kosong pakai angka 'Budget dipakai' (auto/last) supaya konsisten
+  const budRow = findRow(/^Budget restock \(ketik/i);
+  let budget = budRow ? digits(sh.getRange(budRow, 2).getValue()) : 0;
+  const usedRow = findRow(/^Budget dipakai/i);
+  if (!budget && usedRow) budget = digits(sh.getRange(usedRow, 2).getValue());
+
+  // baca baris cart (urut prioritas) — block: SKU col2, Subtotal col12. Deteksi via marker 🛒.
+  const cartSec = findRow(/🛒/);
+  if (!cartSec) return;
+  const items = [], rowIdx = [];
+  let rr = cartSec + 2;                                          // section, header, lalu data
+  while (rr <= last) {
+    const c1 = sh.getRange(rr, 1).getValue();
+    if (typeof c1 !== 'number' || c1 <= 0) break;               // habis cart → ketemu TOTAL/blank
+    items.push({ no: String(sh.getRange(rr, 2).getValue() || ''), estCost: num(sh.getRange(rr, 12).getValue()) });
+    rowIdx.push(rr);
+    rr++;
+  }
+  if (!items.length) return;
+  const totalRow = rr;
+
+  const alloc = _allocateCart(items, budget);
+  const labelMap = {};
+  let bk = 0;
+  for (let i = 0; i < alloc.length; i++) {
+    const tr = rowIdx[i], a = alloc[i];
+    sh.getRange(tr, 14).setValue(a.beli ? a.cumAfter : '').setNumberFormat('"Rp"#,##0');  // Kumulatif (block 14-15)
+    sh.getRange(tr, 16).setValue(a.beli ? '✅ BELI' : '⏸ TUNDA')                            // Aksi (block 16-17)
+      .setBackground(a.beli ? UI.T_GREEN : UI.T_RED).setFontWeight('bold');
+    labelMap[a.no] = a.beli ? ('BELI #' + (++bk)) : 'TUNDA';
+  }
+  const totalBeli = alloc.reduce(function(s, x) { return s + (x.beli ? x.estCost : 0); }, 0);
+
+  if (/^TOTAL BELANJA/i.test(String(sh.getRange(totalRow, 1).getValue()))) {
+    sh.getRange(totalRow, 12).setValue(totalBeli).setNumberFormat('"Rp"#,##0');
+    sh.getRange(totalRow, 14).setValue(budget ? ('sisa budget ' + rupiah(Math.max(0, budget - totalBeli))) : 'budget tak diset → semua BELI');
+  }
+  if (usedRow) sh.getRange(usedRow, 2).setValue(budget ? (rupiah(budget) + '  ·  manual (ketik di sheet)') : '— belum ada → tampil semua SKU, urut RaR');
+  const inbudRow = findRow(/^Belanja dalam budget/i);
+  if (inbudRow) sh.getRange(inbudRow, 2).setValue(budget ? rupiah(totalBeli) : '—');
+
+  // relabel kolom Prioritas Beli (17) di DAFTAR SKU ikut alokasi baru
+  const skuHdr = findRow(/^SKU$/);
+  if (skuHdr) {
+    for (let i = skuHdr; i < colA.length; i++) {
+      if (/^📖/.test(colA[i]) || /CARA BACA/i.test(colA[i])) break;
+      const lbl = labelMap[colA[i]];
+      if (!lbl) continue;
+      const beli = /BELI/.test(lbl);
+      sh.getRange(i + 1, 17).setValue(lbl).setBackground(beli ? UI.T_GREEN : UI.T_RED).setFontWeight(beli ? 'bold' : 'normal');
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

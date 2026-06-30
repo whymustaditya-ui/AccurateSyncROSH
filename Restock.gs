@@ -420,7 +420,8 @@ function _allocateCart(items, budget) {
     else if (cum + cost <= budget) { beli = true; cum += cost; }
     else beli = false;
     return { no: x.no, name: x.name, qty: x.qty != null ? x.qty : x.orderQty,
-             cost: x.cost, estCost: cost, beli: beli, cumAfter: cum };
+             cost: x.cost, estCost: cost, beli: beli, cumAfter: cum,
+             rar: x.rar || 0, tier: x.tier || '' };
   });
 }
 // Skor 1–5 percentile (self-calibrating). sortedAsc = semua nilai katalog urut naik;
@@ -645,7 +646,8 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
   const recommendSpend = needers.reduce(function(s, x) { return s + x.estCost; }, 0);
   // daftar belanja (urut prioritas, budget-independent) — dirender sbg section 🛒 + dipakai onEdit live.
   const cartItems = needers.map(function(x) {
-    return { no: x.no, name: x.name, qty: x.orderQty, cost: x.cost, estCost: x.estCost };
+    return { no: x.no, name: x.name, qty: x.orderQty, cost: x.cost, estCost: x.estCost,
+             rar: x.rar, tier: x.tier };
   });
 
   // coverage harvest: berapa invoice dalam window yang line-item-nya sudah ketarik. Kalau
@@ -690,7 +692,7 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
 function writeRestockTab(restock) {
   const R = CONFIG.RESTOCK;
   const sh = uiSheet(CONFIG.TABS.RESTOCK);
-  const SPAN = 17;
+  const SPAN = 19;
   const t = (restock && restock.totals) || {};
   const bandLabel = (R.BAND_MODE === 'percentile') ? 'percentile (self-calibrating)' : 'absolute';
   let r = 1;
@@ -750,10 +752,10 @@ function writeRestockTab(restock) {
 
   // ── 🛒 DAFTAR BELANJA (kartu belanja sesuai budget) ──
   // Kolom pakai MERGED block (col money sempit di DAFTAR SKU → ### kalau tak di-merge).
-  // Block: [1]# · [2]SKU · [3-7]Nama · [8-9]Qty · [10-11]Harga · [12-13]Subtotal · [14-15]Kumulatif · [16-17]Aksi.
+  // Block: [1]# · [2]SKU · [3]Tier · [4]RaR% · [5-9]Nama · [10-11]Qty · [12-13]Harga · [14-15]Subtotal · [16-17]Kumulatif · [18-19]Aksi.
   r = uiSection(sh, r, SPAN, '🛒 DAFTAR BELANJA — beli ini, segini, urut prioritas (ikut budget di atas)', UI.GOLD);
-  const CART_BLOCKS = [[1, 1], [2, 2], [3, 7], [8, 9], [10, 11], [12, 13], [14, 15], [16, 17]];
-  const cartHdr = ['#', 'SKU', 'Nama', 'Qty (CTN)', 'Harga/CTN', 'Subtotal', 'Kumulatif', 'Aksi'];
+  const CART_BLOCKS = [[1, 1], [2, 2], [3, 3], [4, 4], [5, 9], [10, 11], [12, 13], [14, 15], [16, 17], [18, 19]];
+  const cartHdr = ['#', 'SKU', 'Tier', 'RaR%', 'Nama', 'Qty (CTN)', 'Harga/CTN', 'Subtotal', 'Kumulatif', 'Aksi'];
   CART_BLOCKS.forEach(function(b, j) {
     _mblock(sh, r, b[0], b[1], cartHdr[j]).setBackground(UI.INK).setFontColor(UI.WHITE)
       .setFontWeight('bold').setVerticalAlignment('middle');
@@ -767,24 +769,28 @@ function writeRestockTab(restock) {
       .setFontColor(UI.NOTE).setFontStyle('italic');
     r += 1;
   } else {
+    const cartTierTint = { A: UI.T_GREEN, B: UI.BLUE_SOFT, C: UI.T_AMBER, D: UI.T_GREY };
     allocated.forEach(function(x, i) {
       const row = cartStart + i;
       _mblock(sh, row, 1, 1, i + 1).setHorizontalAlignment('center');
       _mblock(sh, row, 2, 2, x.no);
-      _mblock(sh, row, 3, 7, x.name);
-      _mblock(sh, row, 8, 9, x.qty).setNumberFormat('#,##0').setHorizontalAlignment('right');
-      _mblock(sh, row, 10, 11, x.cost || '').setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
-      _mblock(sh, row, 12, 13, x.estCost || '').setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
-      _mblock(sh, row, 14, 15, x.beli ? x.cumAfter : '').setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
-      _mblock(sh, row, 16, 17, x.beli ? '✅ BELI' : '⏸ TUNDA')
+      _mblock(sh, row, 3, 3, x.tier || '').setFontWeight('bold').setHorizontalAlignment('center')
+        .setBackground(cartTierTint[x.tier] || UI.WHITE);
+      _mblock(sh, row, 4, 4, x.rar || '').setNumberFormat('0.0%').setHorizontalAlignment('right');
+      _mblock(sh, row, 5, 9, x.name);
+      _mblock(sh, row, 10, 11, x.qty).setNumberFormat('#,##0').setHorizontalAlignment('right');
+      _mblock(sh, row, 12, 13, x.cost || '').setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
+      _mblock(sh, row, 14, 15, x.estCost || '').setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
+      _mblock(sh, row, 16, 17, x.beli ? x.cumAfter : '').setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
+      _mblock(sh, row, 18, 19, x.beli ? '✅ BELI' : '⏸ TUNDA')
         .setBackground(x.beli ? UI.T_GREEN : UI.T_RED).setFontWeight('bold').setHorizontalAlignment('center');
     });
     r = cartStart + allocated.length;
     const totalBeli = allocated.reduce(function(s, x) { return s + (x.beli ? x.estCost : 0); }, 0);
-    _mblock(sh, r, 1, 11, 'TOTAL BELANJA (yang ✅ BELI)').setFontWeight('bold').setHorizontalAlignment('right');
-    _mblock(sh, r, 12, 13, totalBeli).setNumberFormat('"Rp"#,##0').setFontWeight('bold')
+    _mblock(sh, r, 1, 13, 'TOTAL BELANJA (yang ✅ BELI)').setFontWeight('bold').setHorizontalAlignment('right');
+    _mblock(sh, r, 14, 15, totalBeli).setNumberFormat('"Rp"#,##0').setFontWeight('bold')
       .setBackground(UI.T_GREEN).setHorizontalAlignment('right');
-    _mblock(sh, r, 14, 17, budget ? ('sisa budget ' + rupiah(Math.max(0, budget - totalBeli))) : 'budget tak diset → semua BELI')
+    _mblock(sh, r, 16, 19, budget ? ('sisa budget ' + rupiah(Math.max(0, budget - totalBeli))) : 'budget tak diset → semua BELI')
       .setFontColor(UI.NOTE);
     r += 1;
   }
@@ -905,6 +911,7 @@ function writeRestockTab(restock) {
   sh.setColumnWidth(10, 72); sh.setColumnWidth(11, 88); sh.setColumnWidth(12, 86);
   sh.setColumnWidth(13, 130); sh.setColumnWidth(14, 88); sh.setColumnWidth(15, 105);
   sh.setColumnWidth(16, 64); sh.setColumnWidth(17, 115);
+  sh.setColumnWidth(18, 64); sh.setColumnWidth(19, 115);
   sh.setFrozenRows(2);   // pin banner saja (RINGKAS + 🛒 cart sekarang di atas DAFTAR SKU)
   return sh;
 }
@@ -972,7 +979,7 @@ function _applyBudgetLive(sh) {
   while (rr <= last) {
     const c1 = sh.getRange(rr, 1).getValue();
     if (typeof c1 !== 'number' || c1 <= 0) break;               // habis cart → ketemu TOTAL/blank
-    items.push({ no: String(sh.getRange(rr, 2).getValue() || ''), estCost: num(sh.getRange(rr, 12).getValue()) });
+    items.push({ no: String(sh.getRange(rr, 2).getValue() || ''), estCost: num(sh.getRange(rr, 14).getValue()) });
     rowIdx.push(rr);
     rr++;
   }
@@ -984,16 +991,16 @@ function _applyBudgetLive(sh) {
   let bk = 0;
   for (let i = 0; i < alloc.length; i++) {
     const tr = rowIdx[i], a = alloc[i];
-    sh.getRange(tr, 14).setValue(a.beli ? a.cumAfter : '').setNumberFormat('"Rp"#,##0');  // Kumulatif (block 14-15)
-    sh.getRange(tr, 16).setValue(a.beli ? '✅ BELI' : '⏸ TUNDA')                            // Aksi (block 16-17)
+    sh.getRange(tr, 16).setValue(a.beli ? a.cumAfter : '').setNumberFormat('"Rp"#,##0');  // Kumulatif (block 16-17)
+    sh.getRange(tr, 18).setValue(a.beli ? '✅ BELI' : '⏸ TUNDA')                            // Aksi (block 18-19)
       .setBackground(a.beli ? UI.T_GREEN : UI.T_RED).setFontWeight('bold');
     labelMap[a.no] = a.beli ? ('BELI #' + (++bk)) : 'TUNDA';
   }
   const totalBeli = alloc.reduce(function(s, x) { return s + (x.beli ? x.estCost : 0); }, 0);
 
   if (/^TOTAL BELANJA/i.test(String(sh.getRange(totalRow, 1).getValue()))) {
-    sh.getRange(totalRow, 12).setValue(totalBeli).setNumberFormat('"Rp"#,##0');
-    sh.getRange(totalRow, 14).setValue(budget ? ('sisa budget ' + rupiah(Math.max(0, budget - totalBeli))) : 'budget tak diset → semua BELI');
+    sh.getRange(totalRow, 14).setValue(totalBeli).setNumberFormat('"Rp"#,##0');
+    sh.getRange(totalRow, 16).setValue(budget ? ('sisa budget ' + rupiah(Math.max(0, budget - totalBeli))) : 'budget tak diset → semua BELI');
   }
   if (usedRow) sh.getRange(usedRow, 2).setValue(budget ? (rupiah(budget) + '  ·  manual (ketik di sheet)') : '— belum ada → tampil semua SKU, urut RaR');
   const inbudRow = findRow(/^Belanja dalam budget/i);

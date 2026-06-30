@@ -116,6 +116,11 @@ function fullSync() {
     writeInvoiceLainTab(invoiceLain);
     writeThpSalesTab(sales);
     writeThpAdeTab(ar);
+    // THP/KPI archive (master-only): upsert this month's Sales+AR figures into the hidden
+    // `_ThpHistory` ledger, then render the 📈 Riwayat THP tab from it. Record FIRST so the
+    // tab reflects the freshly-stamped current month. Mirrors the snapshot→render order below.
+    recordThpHistory(sales, ar, today);
+    writeThpHistoryTab();
     // Business Health (master-only) is now FOLDED INTO the 📋 Ringkasan tab (no separate tab).
     // Compute + record the daily snapshot FIRST (master context, TARGET_SS=null → history on one
     // file) so the Ringkasan's TREN sparkline can read the freshly-stamped snapshot ledger.

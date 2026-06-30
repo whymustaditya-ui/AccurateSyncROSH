@@ -472,17 +472,25 @@ function writeSummaryTab(ctx, role, health) {
     block('COLLECTED BULAN INI', UI.GREEN, collRows);
   }
 
-  if (showSales) block('THP SALES — ' + CONFIG.SALES_NAME, UI.BLUE, [
-    ['Skor KPI', (sales.totalScore * 100).toFixed(0) + '%', 'Maks 106%'],
-    ['Base + Tunjangan + Komisi', rupiah(sales.base) + ' + ' + rupiah(sales.tunjangan) + ' + ' + rupiah(sales.commission), ''],
-    ['THP Sales', rupiah(sales.thp), '→ ' + CONFIG.TABS.THP_SALES]
-  ]);
+  if (showSales) {
+    const salesRows = [
+      ['Skor KPI', (sales.totalScore * 100).toFixed(0) + '%', 'Maks 106%'],
+      ['Base + Tunjangan + Komisi', rupiah(sales.base) + ' + ' + rupiah(sales.tunjangan) + ' + ' + rupiah(sales.commission), ''],
+      ['THP Sales', rupiah(sales.thp), '→ ' + CONFIG.TABS.THP_SALES]
+    ];
+    if (role === 'master') salesRows.push(['Riwayat bulanan', '→ ' + CONFIG.TABS.THP_HISTORY, 'Arsip THP & skor tiap bulan']);
+    block('THP SALES — ' + CONFIG.SALES_NAME, UI.BLUE, salesRows);
+  }
 
-  if (showAr) block('THP AR OFFICER — ' + CONFIG.AR_OFFICER_NAME, UI.BLUE, [
-    ['Komisi diperoleh bln ini', rupiah(ar.komisi), 'Atas masuk kas (aging sejak handover)'],
-    ['Pokok + Tunjangan Ops + Komisi', rupiah(ar.base) + ' + ' + rupiah(ar.ops) + ' + ' + rupiah(ar.komisi), 'Floor ' + rupiah(ar.floor)],
-    ['THP ' + CONFIG.AR_OFFICER_NAME, rupiah(ar.thp), '→ ' + CONFIG.TABS.THP_ADE]
-  ]);
+  if (showAr) {
+    const arRows = [
+      ['Komisi diperoleh bln ini', rupiah(ar.komisi), 'Atas masuk kas (aging sejak handover)'],
+      ['Pokok + Tunjangan Ops + Komisi', rupiah(ar.base) + ' + ' + rupiah(ar.ops) + ' + ' + rupiah(ar.komisi), 'Floor ' + rupiah(ar.floor)],
+      ['THP ' + CONFIG.AR_OFFICER_NAME, rupiah(ar.thp), '→ ' + CONFIG.TABS.THP_ADE]
+    ];
+    if (role === 'master') arRows.push(['Riwayat bulanan', '→ ' + CONFIG.TABS.THP_HISTORY, 'Arsip THP & komisi tiap bulan']);
+    block('THP AR OFFICER — ' + CONFIG.AR_OFFICER_NAME, UI.BLUE, arRows);
+  }
 
   // BUSINESS HEALTH — folded into Ringkasan (master only) so the sheet keeps one strategic
   // screen instead of a separate tab. Needs 4 cols (aging + top debitur tables). `health`

@@ -115,7 +115,8 @@ function writeCaraBacaTab() {
         [CONFIG.TABS.RUTE, 'Daftar jalan penagihan: piutang terbuka per zona, diurut prioritas + rute terdekat', 'Isi Zona & Pin Maps'],
         [CONFIG.TABS.INVOICE_SALES, 'Piutang yang masih di tangan Sales (pre-handover)', 'H+0–H+14'],
         [CONFIG.TABS.THP_ADE, 'Komisi, bonus, & take-home pay ' + me + ' bulan ini', ''],
-        [CONFIG.TABS.THP_SALES, 'KPI & take-home pay Sales (Deden & Dian)', '']
+        [CONFIG.TABS.THP_SALES, 'KPI & take-home pay Sales (Deden & Dian)', ''],
+        [CONFIG.TABS.THP_HISTORY, 'Arsip THP & performa Sales / AR per bulan (riwayat + tren)', 'Master-only']
       ] },
     { band: 'POOL A vs POOL B — DEFINISI', color: UI.RED,
       header: ['Konsep', 'Penjelasan', 'Catatan'],
@@ -221,7 +222,7 @@ function orderTabs() {
     CONFIG.TABS.PESAN, CONFIG.TABS.STOP_SUPPLY,
     CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.RUTE,
     CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.TAGIHAN_LAIN,
-    CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_SALES, CONFIG.TABS.LOG
+    CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
   ];
   order.forEach(function(name, idx) {
     const sh = ss.getSheetByName(name);

@@ -163,6 +163,7 @@ const CONFIG = {
     RUTE:          '🗺️ Rute Penagihan',      // Ade's field drive list: zona priority + nearest-neighbour route (Route.gs)
     THP_ADE:       '📊 KPI Matriks AR',      // AR Officer KPI + take-home pay + bonuses + penalty flags
     THP_SALES:     '📊 KPI Matriks Sales',   // Sales KPI + take-home pay
+    THP_HISTORY:   '📈 Riwayat THP',         // monthly payroll/KPI archive per person (ThpHistory.gs, master-only)
     INVOICE_SALES: '🧾 Tagihan Sales',       // unpaid & overdue ≤14d (still with Sales, pre-handover) — Deden & Dian only
     TAGIHAN_LAIN:  '🧾 Tagihan Lain',         // pre-handover unpaid for everyone NOT in SALES_FILTER (Nathan/partner, POS, others)
     SUMMARY:       '📋 Ringkasan',           // overview

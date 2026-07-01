@@ -199,7 +199,7 @@ function computeArKpi(invoices, onboard, today) {
         milestone: { collected: 0, target: CONFIG.AR_MILESTONE_TARGET, reward: CONFIG.AR_MILESTONE_BONUS, pct: 0, end: mileEnd,   status: NOTSTART },
         cleanup:   { remaining: 0, ceiling: CONFIG.AR_CLEANUP_CEILING, reward: CONFIG.AR_CLEANUP_BONUS,            end: mileEnd,   status: NOTSTART }
       },
-      flags: { regToAging1: 0, aging1ToAging2: 0, penaltyPotential: 0 }
+      flags: { regToAging1: 0, aging1ToAging2: 0, penaltyPotential: 0, list: [] }
     };
   }
 
@@ -242,7 +242,7 @@ function computeArKpi(invoices, onboard, today) {
     },
     cleanup: {
       remaining: remainingA, ceiling: CONFIG.AR_CLEANUP_CEILING, reward: CONFIG.AR_CLEANUP_BONUS,
-      end: mileEnd, // evaluated at end of month 3
+      end: mileEnd, // FORFEIT deadline (end of month 3); payable the moment remaining < ceiling
       status: _bonusStatus(remainingA < CONFIG.AR_CLEANUP_CEILING, today > mileEnd)
     }
   };
@@ -251,12 +251,19 @@ function computeArKpi(invoices, onboard, today) {
   //    Bucket worsening = an unpaid pool invoice whose CURRENT handover-aging sits
   //    in aging1 / aging2 (i.e. it slipped past the 30 / 75-day lines while open).
   let flagReg2A1 = 0, flagA12A2 = 0;
+  const flagList = [];
   invoices.forEach(function(i) {
     if ((i.pool !== 'A' && i.pool !== 'B') || i.isPaid || i.outstanding <= 0 || !i.handoverDate) return;
     const dsh = Math.floor((today - i.handoverDate) / DAY_MS);
-    if (dsh > CONFIG.AR_BUCKET_AGING1_MAX) flagA12A2++;
-    else if (dsh > CONFIG.AR_BUCKET_REG_MAX) flagReg2A1++;
+    let bucket = null;
+    if (dsh > CONFIG.AR_BUCKET_AGING1_MAX) { flagA12A2++; bucket = 'aging2'; }
+    else if (dsh > CONFIG.AR_BUCKET_REG_MAX) { flagReg2A1++; bucket = 'aging1'; }
+    if (bucket) flagList.push({
+      number: i.number, customer: i.customer, outstanding: i.outstanding,
+      dueDate: i.dueDate, daysPastDue: i.daysPastDue, dsh: dsh, bucket: bucket, pool: i.pool
+    });
   });
+  flagList.sort(function(x, y) { return y.dsh - x.dsh; }); // paling tua di atas
   const penaltyPotential = flagReg2A1 * CONFIG.AR_PENALTY_REG_TO_AGING1 +
                            flagA12A2 * CONFIG.AR_PENALTY_AGING1_TO_AGING2;
 
@@ -281,13 +288,17 @@ function computeArKpi(invoices, onboard, today) {
     },
     poolB: { outstanding: outstandingB, count: countB, komisi: komisiPoolB },
     bonus: bonus,
-    flags: { regToAging1: flagReg2A1, aging1ToAging2: flagA12A2, penaltyPotential: penaltyPotential }
+    flags: { regToAging1: flagReg2A1, aging1ToAging2: flagA12A2, penaltyPotential: penaltyPotential, list: flagList }
   };
 }
 
 // Bonus status string from (target met?, window passed?).
+// Bonus targets are monotonic (Sprint/Milestone collected only grows; Cleanup's Pool A
+// backlog only burns down), so once `met` it can't un-achieve → payable immediately, no
+// need to wait for the window to close. The window is only a FORFEIT deadline: miss it
+// (still not met when it closes) → gugur.
 function _bonusStatus(met, windowClosed) {
-  if (met) return windowClosed ? '✅ Tercapai' : '✅ Sudah lewat target';
+  if (met) return windowClosed ? '✅ Tercapai' : '✅ Cair — bisa dibayar';
   return windowClosed ? '❌ Window tutup' : '⏳ Berjalan';
 }
 
@@ -387,6 +398,24 @@ function writeThpAdeTab(a) {
   r = _arRow(sh, r, 'Potensi potongan (Tunjangan Ops)', rupiah(a.flags.penaltyPotential), '', 'TIDAK dipotong otomatis — owner cek 🟡 follow-up');
   r = _arRow(sh, r, 'Clawback komisi', 'Pantau manual', '', 'Bila pembayaran di-void/retur setelah komisi dibayar');
   r += 1;
+
+  // ── RINCIAN INVOICE KE-FLAG — invoice mana saja yang menyumbang angka di atas ──
+  if (a.flags.list && a.flags.list.length) {
+    r = uiSection(sh, r, SPAN, 'RINCIAN INVOICE KE-FLAG — cek 🟡 follow-up sebelum potong (paling tua di atas)', UI.GOLD);
+    uiHeaderRow(sh, r, ['Faktur', 'Customer', 'Outstanding', 'Umur sejak handover']); r += 1;
+    const flagStart = r;
+    a.flags.list.forEach(function(f) {
+      const tag = f.bucket === 'aging2' ? '🔴 aging-2 (>75 hr)' : '🟠 aging-1 (31–75 hr)';
+      const dueTxt = (f.daysPastDue != null) ? ' · ' + f.daysPastDue + ' hr lewat due' : '';
+      r = _arRow(sh, r, f.number, f.customer, rupiah(f.outstanding),
+        f.dsh + ' hr · ' + tag + dueTxt);
+    });
+    // tint baris aging-2 merah lembut biar yang paling parah menonjol
+    a.flags.list.forEach(function(f, i) {
+      if (f.bucket === 'aging2') sh.getRange(flagStart + i, 1, 1, SPAN).setBackground(UI.RED_SOFT || '#fde8e8');
+    });
+    r += 1;
+  }
 
   uiFootnote(sh, r, SPAN, '⚠️ Bonus & penalty = keputusan owner, TIDAK auto-apply. THP otomatis = Gaji Pokok + Tunjangan Operasional + Komisi.');
 

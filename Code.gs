@@ -210,6 +210,8 @@ function onOpen() {
     .addSeparator()
     .addItem('Refresh Restock (item + SKU sales)', 'refreshSkuSalesNow')
     .addItem('Refresh Kontak Customer', 'refreshKontakNow')
+    .addItem('Rebuild Kontak cache (wipe + refetch)', 'rebuildKontakCacheNow')
+    .addItem('Diag kontak fields (WA/telp)', 'diagKontakFields')
     .addItem('Diag item fields', 'diagItemFields')
     .addItem('Diag purchase fields', 'diagPurchaseFields')
     .addItem('Diag cash/bank fields', 'diagCashBankFields')

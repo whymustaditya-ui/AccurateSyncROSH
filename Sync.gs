@@ -420,10 +420,21 @@ function _custPhone(r) {
   return String(v).trim();
 }
 
-// No WA = nomor HP/seluler (mobile-first; verify actual field names via diagCustomerFields()).
+// No WA = field "No. WhatsApp" di customer master (UI Umum). Nama field API bervariasi
+// antar build → coba kandidat eksplisit dulu, lalu SCAN semua key yang mengandung
+// "whatsapp"/"wa", terakhir fallback Handphone. Verify via diagKontakFields().
 function _custWa(r) {
-  const v = r.mobilePhone || r.whatsappNo || r.cellularPhone || '';
-  return String(v).trim();
+  const v = r.whatsappNo || r.noWhatsapp || r.whatsapp || r.waNumber || '';
+  if (v) return String(v).trim();
+  const keys = Object.keys(r || {});
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    if (!/whats.?app|(^|[^a-z])wa(no|number)?$/i.test(k)) continue;
+    const val = r[k];
+    if (val != null && /\d{6,}/.test(String(val))) return String(val).trim();
+  }
+  const hp = r.mobilePhone || r.cellularPhone || '';  // Handphone sebagai fallback terakhir
+  return String(hp).trim();
 }
 
 // No Bisnis = telepon kantor/toko (landline-first — the non-mobile line).

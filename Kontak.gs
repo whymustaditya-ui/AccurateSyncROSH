@@ -121,6 +121,38 @@ function writeKontakTab() {
   return sh;
 }
 
+// DIAG — dump semua key yang kelihatan seperti field telepon/WA dari beberapa customer,
+// biar mapping _custWa/_custBiz bisa dicocokkan dengan build Accurate ROSH. Run dari editor,
+// lihat View ▸ Logs.
+function diagKontakFields() {
+  const res = accApi('/accurate/api/customer/list.do', { 'sp.page': 1, 'sp.pageSize': 5 });
+  const rows = (res && res.d) || [];
+  rows.forEach(function(row) {
+    if (row.id == null) return;
+    const dres = accApi('/accurate/api/customer/detail.do', { id: row.id });
+    const r = (dres && dres.d) ? dres.d : null;
+    if (!r) return;
+    Logger.log('── customer id=' + row.id + ' (' + (r.name || '?') + ')');
+    Object.keys(r).forEach(function(k) {
+      const v = r[k];
+      const phoneLikeKey = /phone|whats|(^|[^a-z])wa|telp|tlp|mobile|hp|fax/i.test(k);
+      const phoneLikeVal = (typeof v === 'string' || typeof v === 'number') && /\d{6,}/.test(String(v)) && String(v).length <= 20;
+      if (phoneLikeKey || phoneLikeVal) Logger.log('   ' + k + ' = ' + JSON.stringify(v));
+    });
+    Logger.log('   → _custWa=' + _custWa(r) + ' | _custBiz=' + _custBiz(r) + ' | _custPhone=' + _custPhone(r));
+  });
+}
+
+// Menu entry — WIPE _ContactCache lalu refetch dari nol. Pakai setelah mapping field
+// berubah (mis. fix _custWa): entry lama sudah punya `nama` jadi harvest men-skip mereka;
+// satu-satunya cara isi ulang noWa = buang cache. Alamat/telp di tab lain kosong sementara
+// → self-healing dalam 1–2 run (time-budgeted). Jalankan Refresh lagi kalau belum lengkap.
+function rebuildKontakCacheNow() {
+  const sh = _contactCacheSheet();
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, CONTACT_CACHE_HEADERS.length).clearContent();
+  refreshKontakNow();
+}
+
 // Menu entry — drain kontak tanpa nunggu sync 05:00, lalu render tab-nya.
 function refreshKontakNow() {
   SYNC_START = Date.now();

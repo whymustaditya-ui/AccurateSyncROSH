@@ -424,12 +424,15 @@ function _custPhone(r) {
 // antar build → coba kandidat eksplisit dulu, lalu SCAN semua key yang mengandung
 // "whatsapp"/"wa", terakhir fallback Handphone. Verify via diagKontakFields().
 function _custWa(r) {
-  const v = r.whatsappNo || r.noWhatsapp || r.whatsapp || r.waNumber || '';
+  const v = r.whatsappNo || r.noWhatsapp || r.whatsapp || r.waNumber || r.noWa || r.wa || '';
   if (v) return String(v).trim();
+  // Scan semua key: camelCase dipecah dulu (noWa → no_wa) biar boundary "wa" kebaca,
+  // lalu cocokkan "whats(app)" atau kata "wa" berdiri sendiri; nilai harus bernomor.
   const keys = Object.keys(r || {});
   for (let i = 0; i < keys.length; i++) {
     const k = keys[i];
-    if (!/whats.?app|(^|[^a-z])wa(no|number)?$/i.test(k)) continue;
+    const snake = k.replace(/([A-Z])/g, '_$1').toLowerCase();
+    if (!/whats|(^|_)wa(_|no|number|$)/.test(snake)) continue;
     const val = r[k];
     if (val != null && /\d{6,}/.test(String(val))) return String(val).trim();
   }

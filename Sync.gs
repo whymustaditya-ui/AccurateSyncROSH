@@ -108,6 +108,12 @@ function fullSync() {
     writeTodoTab(dueReminders, followUps);    // 📌 daily action list
     writePesanTab(penagihanBatch);            // ✉️ pesan WA siap kirim, group-by-customer (master-only)
     writeStopSupplyTab(stopSupply);           // ⛔ daftar HOLD order (≥H+7) untuk Nathan (master-only)
+    // 📇 Kontak Customer (master-only) — directory semua customer (nama/WA/telp bisnis).
+    // FAIL-SOFT: harvest time-budgeted (drain bertahap); gagal harvest ≠ gagal sync.
+    try {
+      try { harvestAllCustomerContacts(); } catch (e) { Logger.log('Harvest kontak dilewati: ' + e.message); }
+      writeKontakTab();
+    } catch (e) { Logger.log('Kontak Customer dilewati: ' + e.message); }
     if (restock) writeRestockTab(restock);    // 📦 Restock Engine — saran pembelian per SKU (master-only)
     writePoolTab(CONFIG.TABS.POOL_A, poolA, 'A', yA);
     writePoolTab(CONFIG.TABS.POOL_B, poolB, 'B', yB);
@@ -276,7 +282,7 @@ var CONTACT_TIME_BUDGET_MS = 240000;  // stop fetching ~4 min in; leaves ≥2 mi
 var CONTACT_MAX_DETAIL     = 400;     // hard cap on detail.do fallbacks per run
 
 function attachCustomerContacts(invoices) {
-  const cache = _loadContactCache();              // { idStr: { alamat, noTlp } } (persistent)
+  const cache = _loadContactCache();              // { idStr: { nama, alamat, noTlp, noWa, noBisnis, noVa } } (persistent)
 
   // Unique customer ids we actually need this run.
   const needed = {};
@@ -294,15 +300,18 @@ function attachCustomerContacts(invoices) {
   let pulls = 0, fails = 0, skipped = 0;
   Object.keys(needed).forEach(function(id) {
     const have = cache[id];
-    if (have && have.alamat) return;                // already have alamat (+ telp) — done
+    if (have && have.alamat && have.nama) return;   // already complete (alamat + nama + telp) — done
     if (pulls >= CONTACT_MAX_DETAIL ||
         (SYNC_START && (Date.now() - SYNC_START) > CONTACT_TIME_BUDGET_MS)) { skipped++; return; }
     try {
       const d = fetchCustomerDetail(id);
-      if (d) cache[id] = { alamat: d.alamat || (have && have.alamat) || '',
-                           noTlp:  d.noTlp  || (have && have.noTlp)  || '',
-                           noVa:   d.noVa   || (have && have.noVa)   || '' };
-      else if (!have) cache[id] = { alamat: '', noTlp: '', noVa: '' };
+      if (d) cache[id] = { nama:     d.nama     || (have && have.nama)     || '',
+                           alamat:   d.alamat   || (have && have.alamat)   || '',
+                           noTlp:    d.noTlp    || (have && have.noTlp)    || '',
+                           noWa:     d.noWa     || (have && have.noWa)     || '',
+                           noBisnis: d.noBisnis || (have && have.noBisnis) || '',
+                           noVa:     d.noVa     || (have && have.noVa)     || '' };
+      else if (!have) cache[id] = { nama: '', alamat: '', noTlp: '', noWa: '', noBisnis: '', noVa: '' };
     } catch (e) { fails++; }                         // leave as-is → retried next sync
     pulls++;
     if (pulls % 25 === 0) Utilities.sleep(150);
@@ -336,8 +345,10 @@ function _bulkLoadContacts(cache) {
     const rows = (res && res.d) || [];
     rows.forEach(function(r) {
       if (r.id == null || cache[r.id]) return;
+      const nama = String(r.name || '').trim();
       const alamat = _custAddress(r), noTlp = _custPhone(r), noVa = _custVa(r);
-      if (alamat || noTlp || noVa) cache[r.id] = { alamat: alamat, noTlp: noTlp, noVa: noVa };  // skip empty → fallback tries later
+      if (alamat || noTlp || noVa) cache[r.id] = { nama: nama, alamat: alamat, noTlp: noTlp,
+                                                   noWa: _custWa(r), noBisnis: _custBiz(r), noVa: noVa };  // skip empty → fallback tries later
     });
     const pc = (res && res.sp && res.sp.pageCount) ? res.sp.pageCount : 1;
     if (page >= pc || rows.length === 0) break;
@@ -347,55 +358,77 @@ function _bulkLoadContacts(cache) {
 }
 
 // ── Persistent contact cache (hidden sheet) ──────────────────────────────────
-// Schema: customerId | alamat | noTlp | noVa. AUTO-MIGRATES an old 3-col cache (tanpa
-// kolom noVa) dengan wipe sekali → rebuild membawa Virtual Account per customer.
+// Schema: customerId | nama | alamat | noTlp | noWa | noBisnis | noVa. AUTO-MIGRATES an
+// older cache (header lain, mis. 4-col tanpa nama/noWa/noBisnis) dengan wipe sekali →
+// rebuild bertahap via detail.do (time-budgeted, sama seperti migrasi noVa dulu).
+var CONTACT_CACHE_HEADERS = ['customerId', 'nama', 'alamat', 'noTlp', 'noWa', 'noBisnis', 'noVa'];
 function _contactCacheSheet() {
   const ss = _ss();
+  const W = CONTACT_CACHE_HEADERS.length;
   let sh = ss.getSheetByName('_ContactCache');
   if (!sh) {
     sh = ss.insertSheet('_ContactCache');
-    sh.getRange(1, 1, 1, 4).setValues([['customerId', 'alamat', 'noTlp', 'noVa']]);
+    sh.getRange(1, 1, 1, W).setValues([CONTACT_CACHE_HEADERS]);
     sh.hideSheet();
     return sh;
   }
-  const hdr = sh.getRange(1, 1, 1, 4).getValues()[0];
-  if (String(hdr[3]).trim() !== 'noVa') {           // old 3-col cache → migrate (rebuild w/ VA)
+  const hdr = sh.getRange(1, 1, 1, W).getValues()[0];
+  const isCurrent = CONTACT_CACHE_HEADERS.every(function(h, i) { return String(hdr[i]).trim() === h; });
+  if (!isCurrent) {                                 // old schema → migrate (wipe once, rebuild)
     sh.clearContents();
-    sh.getRange(1, 1, 1, 4).setValues([['customerId', 'alamat', 'noTlp', 'noVa']]);
+    sh.getRange(1, 1, 1, W).setValues([CONTACT_CACHE_HEADERS]);
   }
   return sh;
 }
 function _loadContactCache() {
   const sh = _contactCacheSheet();
+  const W = CONTACT_CACHE_HEADERS.length;
   const last = sh.getLastRow();
   const map = {};
   if (last >= 2) {
-    sh.getRange(2, 1, last - 1, 4).getValues().forEach(function(r) {
-      if (r[0] !== '' && r[0] != null) map[r[0]] = { alamat: r[1] || '', noTlp: r[2] || '', noVa: r[3] || '' };
+    sh.getRange(2, 1, last - 1, W).getValues().forEach(function(r) {
+      if (r[0] !== '' && r[0] != null) map[r[0]] = { nama: r[1] || '', alamat: r[2] || '', noTlp: r[3] || '',
+                                                     noWa: r[4] || '', noBisnis: r[5] || '', noVa: r[6] || '' };
     });
   }
   return map;
 }
 function _saveContactCache(map) {
   const sh = _contactCacheSheet();
+  const W = CONTACT_CACHE_HEADERS.length;
   const rows = Object.keys(map).map(function(id) {
-    return [id, map[id].alamat || '', map[id].noTlp || '', map[id].noVa || ''];
+    const c = map[id];
+    return [id, c.nama || '', c.alamat || '', c.noTlp || '', c.noWa || '', c.noBisnis || '', c.noVa || ''];
   });
-  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, 4).clearContent();
-  if (rows.length) sh.getRange(2, 1, rows.length, 4).setValues(rows);
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, W).clearContent();
+  if (rows.length) sh.getRange(2, 1, rows.length, W).setValues(rows);
 }
 
-// Per-customer detail.do → { alamat, noTlp, noVa }. Used as fallback when list.do omits contacts.
+// Per-customer detail.do → { nama, alamat, noTlp, noWa, noBisnis, noVa }. Used as fallback
+// when list.do omits contacts, and by the 📇 Kontak Customer harvest (Kontak.gs).
 function fetchCustomerDetail(id) {
   const res = accApi('/accurate/api/customer/detail.do', { id: id });
   const r = (res && res.d) ? res.d : null;
   if (!r) return null;
-  return { alamat: _custAddress(r), noTlp: _custPhone(r), noVa: _custVa(r) };
+  return { nama: String(r.name || '').trim(), alamat: _custAddress(r), noTlp: _custPhone(r),
+           noWa: _custWa(r), noBisnis: _custBiz(r), noVa: _custVa(r) };
 }
 
 // First non-empty phone field (field names vary across Accurate builds).
 function _custPhone(r) {
   const v = r.mobilePhone || r.phone || r.workPhone || r.cellularPhone || r.whatsappNo || r.fax || '';
+  return String(v).trim();
+}
+
+// No WA = nomor HP/seluler (mobile-first; verify actual field names via diagCustomerFields()).
+function _custWa(r) {
+  const v = r.mobilePhone || r.whatsappNo || r.cellularPhone || '';
+  return String(v).trim();
+}
+
+// No Bisnis = telepon kantor/toko (landline-first — the non-mobile line).
+function _custBiz(r) {
+  const v = r.workPhone || r.phone || r.fax || '';
   return String(v).trim();
 }
 

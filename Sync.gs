@@ -420,11 +420,12 @@ function _custPhone(r) {
   return String(v).trim();
 }
 
-// No WA = field "No. WhatsApp" di customer master (UI Umum). Nama field API bervariasi
-// antar build → coba kandidat eksplisit dulu, lalu SCAN semua key yang mengandung
-// "whatsapp"/"wa", terakhir fallback Handphone. Verify via diagKontakFields().
+// No WA = field "No. WhatsApp" di customer master (UI Umum). CONFIRMED via diagKontakFields
+// 2026-07-06: API menyimpannya di `bbmPin` (field legacy BBM Pin yang di-recycle jadi
+// WhatsApp — mis. AR Plastik: workPhone 6289…784 vs bbmPin 6285…298, mobilePhone null).
+// Kandidat lain + scan dipertahankan untuk jaga-jaga build berubah.
 function _custWa(r) {
-  const v = r.whatsappNo || r.noWhatsapp || r.whatsapp || r.waNumber || r.noWa || r.wa || '';
+  const v = r.bbmPin || r.whatsappNo || r.noWhatsapp || r.whatsapp || r.waNumber || r.noWa || r.wa || '';
   if (v) return String(v).trim();
   // Scan semua key: camelCase dipecah dulu (noWa → no_wa) biar boundary "wa" kebaca,
   // lalu cocokkan "whats(app)" atau kata "wa" berdiri sendiri; nilai harus bernomor.

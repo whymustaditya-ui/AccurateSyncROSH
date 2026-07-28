@@ -3,7 +3,7 @@
  *
  * Group-by-CUSTOMER: 1 pesan per pelanggan menggabungkan semua faktur-nya yang ada di
  * window penagihan H-1 → H+CONFIG.PENAGIHAN_WINDOW_MAX (14) — mendukung 4-touch flow
- * Deden (H-1 / H+3 / H+7 stop-supply / H+14). Nathan/Deden tinggal COPY teks atau TAP
+ * Deden (H-1 / H+3 / H+7 / H+14, nada sopan naik bertahap). Nathan/Deden tinggal COPY teks atau TAP
  * link wa.me yang pesannya sudah terisi (manual Send — BUKAN auto-send; lihat catatan
  * Reminders.gs yang dihapus 2026-05-31).
  *
@@ -78,9 +78,16 @@ function _waPhone(raw) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MESSAGE — natural Bahasa, group-by-customer. Tone per bucket; tier A/B di-soften;
-// daftar semua faktur in-window + total; CTA pemancing balasan (set up window Qontak).
-// Semua copy terkumpul di sini biar Bro gampang tune.
+// MESSAGE — natural Bahasa, group-by-customer. Semua copy customer-facing terkumpul di
+// fungsi ini biar Bro gampang tune. Tier A/B di-soften; daftar semua faktur in-window +
+// total; CTA bukti transfer (set up window Qontak).
+//
+// ⚠ Copy DIREVISI 2026-07-28 setelah komplain partner: nada lama terlalu keras (H+7 ancam
+// "order baru kami tahan sampai pelunasan", H+14 "sebelum kami tindak lanjuti lebih jauh")
+// sampai beberapa toko plastik MEMBLOKIR nomor WA ROSH. Nada baru semi-formal: sapaan WA
+// tetap hangat, badan pesan gaya korespondensi sopan. Stop-supply masih disinggung di H+7
+// tapi diframing sebagai enabler ("agar order berikutnya dapat langsung kami proses"),
+// bukan sanksi. Leverage sebenarnya tetap di tab ⛔ Stop Supply (HOLD) + hold manual Nathan.
 // ─────────────────────────────────────────────────────────────────────────────
 function _penagihanMessageBatch(c) {
   const cust = c.customer || 'Bapak/Ibu';
@@ -88,29 +95,33 @@ function _penagihanMessageBatch(c) {
   const dpd  = c.maxDaysPastDue;
 
   let msg = 'Halo Bapak/Ibu ' + cust + ', ';
-  if (tier === 'A' || tier === 'B') msg += 'terima kasih atas kepercayaan & kerja samanya selama ini. ';
+  if (tier === 'A' || tier === 'B') msg += 'terima kasih atas kepercayaan dan kerja samanya selama ini. ';
 
   if (dpd <= 0) {
-    msg += 'kami informasikan tagihan berikut akan segera jatuh tempo. Mohon dapat dipersiapkan pembayarannya.';
+    // window lo = -1 → bucket ini isinya dpd -1 (besok) & 0 (hari ini); jangan bilang "besok" untuk keduanya.
+    msg += 'mohon izin mengingatkan, tagihan berikut ' + (dpd < 0 ? 'akan jatuh tempo besok' : 'jatuh tempo hari ini') +
+           '. Apabila pembayaran sudah dijadwalkan, kami ucapkan terima kasih.';
   } else if (dpd <= 3) {
-    msg += 'kami ingin menindaklanjuti tagihan berikut yang telah melewati jatuh tempo. Mohon informasinya terkait status atau estimasi pembayaran.';
+    msg += 'mohon izin melakukan follow up untuk tagihan berikut yang telah melewati tanggal jatuh tempo. Apabila pembayaran masih dalam proses, kami akan sangat terbantu bila Bapak/Ibu berkenan menginformasikan estimasi waktu pembayarannya.';
   } else if (dpd <= 7) {
-    msg += 'tagihan berikut sudah cukup lama melewati jatuh tempo. Mohon segera diselesaikan — untuk sementara order baru kami tahan sampai pelunasan.';
+    msg += 'mohon izin kembali menindaklanjuti tagihan berikut yang masih tercatat belum terselesaikan. Kami akan sangat menghargai bila Bapak/Ibu dapat menginformasikan estimasi waktu pembayarannya, agar order berikutnya dapat langsung kami proses.';
   } else {
-    msg += 'ini pengingat terakhir untuk tagihan berikut sebelum kami tindak lanjuti lebih jauh. Mohon segera diselesaikan.';
+    msg += 'mohon izin menindaklanjuti kembali tagihan berikut yang hingga saat ini masih tercatat belum terselesaikan. Kami akan sangat menghargai bila Bapak/Ibu dapat memberikan konfirmasi jadwal pembayarannya. Apabila ada hal yang ingin didiskusikan terkait pembayaran, kami dengan senang hati siap membantu.';
   }
 
   msg += '\n';
   c.invoices.forEach(function(iv) {
-    msg += '\n• ' + iv.number + ' — ' + rupiah(iv.outstanding) + ' (jatuh tempo ' + fmtDate(iv.dueDate) + ')';
+    msg += '\n• ' + iv.number + ' : ' + rupiah(iv.outstanding) + ' (jatuh tempo ' + fmtDate(iv.dueDate) + ')';
   });
   if (c.invoices.length > 1) msg += '\n\nTotal tagihan: ' + rupiah(c.totalOutstanding);
 
-  msg += '\n\nPembayaran dapat ditransfer ke:\nBCA ' + FAKTUR.REK_BCA + ' a.n. ' + FAKTUR.ACC_NAME;
-  if (c.noVa) msg += '\n(atau Virtual Account BCA ' + _fullVaBca(c.noVa) + ' — khusus ' + cust + ')';
-  msg += '.';
-  msg += '\n\nMohon sertakan Bukti Transfer bila sudah transfer ya.';
-  msg += '\nTerima Kasih.\n-TIM ROSH PLASTIC';
+  // VA DULU baru rekening biasa: transfer ke VA otomatis terekonsiliasi ke customer ini,
+  // rekening biasa harus dicocokkan manual. Customer tanpa VA langsung lihat BCA.
+  msg += '\n\nPembayaran dapat dilakukan melalui rekening berikut:';
+  if (c.noVa) msg += '\nVirtual Account BCA ' + _fullVaBca(c.noVa) + ' (khusus ' + cust + ')';
+  msg += '\n' + (c.noVa ? 'atau BCA ' : 'BCA ') + FAKTUR.REK_BCA + ' a.n. ' + FAKTUR.ACC_NAME;
+  msg += '\n\nSetelah pembayaran dilakukan, mohon berkenan mengirimkan bukti transfer agar dapat segera kami verifikasi.';
+  msg += '\nTerima kasih atas perhatian dan kerja sama Bapak/Ibu.\n-TIM ROSH PLASTIC';
   return msg;
 }
 
@@ -177,7 +188,7 @@ function writePesanTab(batch) {
 
   uiFootnote(sh, PESAN_DROW + matrix.length + 1, SPAN,
     '◆ Cara pakai: 1 baris = 1 pelanggan (faktur digabung). COPY kolom Pesan atau tap 📲 Kirim WA (pesan auto-terisi, ' +
-    'tinggal Send — tidak terkirim otomatis). Bucket H+7 = nada tegas + notice order ditahan (stop-supply). Faktur yang ' +
+    'tinggal Send — tidak terkirim otomatis). Bucket H+7 = pengingat sopan + isyarat halus order berikutnya menunggu pelunasan. Faktur yang ' +
     'BELUM jatuh tempo (jauh dari H-1) tidak disebut. Tier A/B nada lebih hangat. Baris tanpa No. Telp (POS/online) tak punya link.');
 
   sh.setColumnWidth(1, 200); sh.setColumnWidth(2, 130); sh.setColumnWidth(3, 130);

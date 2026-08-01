@@ -224,10 +224,16 @@ function orderTabs() {
     CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.TAGIHAN_LAIN, CONFIG.TABS.KONTAK,
     CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
   ];
-  order.forEach(function(name, idx) {
+  // Position counts only the tabs THIS file actually has. Using the array index would
+  // aim past the last sheet in a role file (Deden has ~4 tabs, the array has 16) and
+  // moveActiveSheet() throws "Invalid argument". Identical result on master, where
+  // every tab exists. Keeps orderTabs() safe to call on any target file.
+  let pos = 0;
+  order.forEach(function(name) {
     const sh = ss.getSheetByName(name);
     if (!sh) return;
+    pos++;
     ss.setActiveSheet(sh);
-    ss.moveActiveSheet(idx + 1);
+    ss.moveActiveSheet(pos);
   });
 }

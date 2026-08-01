@@ -126,7 +126,7 @@ function fullSync() {
     // `_ThpHistory` ledger, then render the 📈 Riwayat THP tab from it. Record FIRST so the
     // tab reflects the freshly-stamped current month. Mirrors the snapshot→render order below.
     recordThpHistory(sales, ar, today);
-    writeThpHistoryTab();
+    writeThpHistoryTab(invoices, 'master');
     // Business Health (master-only) is now FOLDED INTO the 📋 Ringkasan tab (no separate tab).
     // Compute + record the daily snapshot FIRST (master context, TARGET_SS=null → history on one
     // file) so the Ringkasan's TREN sparkline can read the freshly-stamped snapshot ledger.
@@ -146,12 +146,22 @@ function fullSync() {
       _dropDefaultSheet();
     }
 
-    // ── DEDEN file — Summary (Sales-scoped) + Tagihan Sales + KPI Matriks Sales (view only) ──
+    // ── DEDEN file — Summary (Sales-scoped) + Tagihan Sales + Pool B (his customers) + KPI ──
+    // Pool B here is SCOPED TO DEDEN'S OWN CUSTOMERS (_bySalesman) and is informational:
+    // once past H+14 the invoice is Ade's to collect, but Deden still needs to see which of
+    // his accounts are stuck. Same yB map as master/Ade → he also sees Ade's 🟡 follow-ups.
     if (dedenSS) {
       TARGET_SS = dedenSS;
+      const poolBDeden = _bySalesman(poolB, CONFIG.SALES_NAME);
       writeSummaryTab(ctx, 'deden');
       writeInvoiceSalesTab(invoiceSales);
+      writePoolTab(CONFIG.TABS.POOL_B, poolBDeden, 'B', yB,
+        'Customer kamu yang tagihannya sudah lewat H+14 dan pindah ke ' + CONFIG.AR_OFFICER_NAME +
+        '. Penagihan jadi tugas ' + CONFIG.AR_OFFICER_NAME + '; tab ini untuk kamu pantau saja (lihat, tidak diisi).',
+        true);                               // viewOnly — semua kolom read-only di file Deden
       writeThpSalesTab(sales);
+      writeThpHistoryTab(invoices, 'deden'); // 📈 Riwayat THP — SALES section only (no Ade)
+      orderTabs();                           // safe here: positions count only existing tabs
       _dropDefaultSheet();
     }
 
@@ -712,6 +722,7 @@ function poolRow(i, pool, today) {
     customerId: i.customerId,          // → Faktur link &c= (resolve VA per customer)
     number: i.number,
     customer: i.customer,
+    salesman: i.salesman || '',        // not a column — used to scope Pool B to Deden's file
     total: i.total,
     dueDate: i.dueDate,
     handoverDate: i.handoverDate,
@@ -752,6 +763,20 @@ function buildPoolB(invoices, today) {
       return (b.hariSejakHandover === '' ? -1 : b.hariSejakHandover) -
              (a.hariSejakHandover === '' ? -1 : a.hariSejakHandover);
     });
+}
+
+// Scope any list of invoice-ish objects (needs `.salesman`) to one salesman —
+// case-insensitive, matches the full CONFIG.SALES_NAME or just its first name since
+// Accurate sometimes stores the short form. Empty salesman ("" = POS/online) never
+// matches. Used by Pool B on Deden's file and by buildMonthlyIssued (ThpHistory.gs).
+function _bySalesman(rows, name) {
+  const full  = String(name || '').toLowerCase().trim();
+  const first = full.split(/\s+/)[0] || '';
+  if (!first) return [];
+  return rows.filter(function(r) {
+    const s = String(r.salesman || '').toLowerCase();
+    return !!s && (s.indexOf(full) >= 0 || s.indexOf(first) >= 0);
+  });
 }
 
 // True if a salesman name matches any first-name in CONFIG.SALES_FILTER (case-insensitive).
@@ -1040,7 +1065,9 @@ var POOL_YELLOW_COLS = [9, 10, 11, 12]; // human-filled, preserved across syncs
 var POOL_HROW = 3;  // column-header row (banner=1, subtitle=2)
 var POOL_DROW = 4;  // first data row
 
-function writePoolTab(name, rows, pool, preservedOverride) {
+// viewOnly=true (Deden's file): render the 🟡 columns as READ-ONLY — no dropdowns, no
+// amber "fill me" tint, and nothing left unprotected. Only Ade (AR Officer) fills those.
+function writePoolTab(name, rows, pool, preservedOverride, subtitleOverride, viewOnly) {
   const ss = _ss();
   let sh = ss.getSheetByName(name);
   const SPAN = POOL_HEADERS.length;
@@ -1075,14 +1102,16 @@ function writePoolTab(name, rows, pool, preservedOverride) {
   const isA = pool === 'A';
   uiBanner(sh, 1, SPAN,
     (isA ? '🔴 Pool A — Stuck AR (Legacy Backlog)' : '🔵 Pool B — Ongoing AR'),
-    (isA
+    (subtitleOverride || (isA
       ? 'Snapshot FROZEN per ' + CONFIG.ADE_ONBOARD_DATE + '. Aging bucket dikunci, list tidak bertambah — burn-down ke Rp0.'
-      : 'Invoice yang lewat ke ' + CONFIG.AR_OFFICER_NAME + ' di H+15 setelah onboard. Terus bertambah seiring waktu.'),
+      : 'Invoice yang lewat ke ' + CONFIG.AR_OFFICER_NAME + ' di H+15 setelah onboard. Terus bertambah seiring waktu.')),
     (isA ? UI.RED : UI.BLUE), (isA ? UI.RED_SOFT : UI.BLUE_SOFT));
 
   // column headers at row 3
   uiHeaderRow(sh, POOL_HROW, POOL_HEADERS);
-  sh.getRange(POOL_HROW, 9, 1, 4).setBackground(UI.AMBER).setFontColor(UI.WHITE); // 🟡 cols
+  // 🟡 cols — amber where they're editable (Ade), neutral grey where they're read-only (Deden).
+  sh.getRange(POOL_HROW, 9, 1, 4)
+    .setBackground(viewOnly ? UI.NOTE : UI.AMBER).setFontColor(UI.WHITE);
   sh.setFrozenRows(POOL_HROW);
   // NB: no frozen columns — the full-width banner merge (row 1, cols 1–SPAN)
   // straddles any column-freeze boundary, which Sheets rejects ("can't merge
@@ -1113,16 +1142,19 @@ function writePoolTab(name, rows, pool, preservedOverride) {
       sh.getRange(POOL_DROW, c, matrix.length, 1).setNumberFormat('"Rp"#,##0');
     });
 
-    // 🟡 dropdowns
-    const chanRule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(['WA', 'Telp', 'Visit'], true).setAllowInvalid(true).build();
-    sh.getRange(POOL_DROW, 9, matrix.length, 1).setDataValidation(chanRule);
-    const hasilRule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(['Cicil', 'Payment', 'Komitmen Bayar', '-'], true).setAllowInvalid(true).build();
-    sh.getRange(POOL_DROW, 10, matrix.length, 1).setDataValidation(hasilRule);
+    // 🟡 dropdowns + amber tint — ONLY where the columns are actually fillable. On a
+    // view-only copy they'd be a false affordance (dropdown arrows he can't use).
+    if (!viewOnly) {
+      const chanRule = SpreadsheetApp.newDataValidation()
+        .requireValueInList(['WA', 'Telp', 'Visit'], true).setAllowInvalid(true).build();
+      sh.getRange(POOL_DROW, 9, matrix.length, 1).setDataValidation(chanRule);
+      const hasilRule = SpreadsheetApp.newDataValidation()
+        .requireValueInList(['Cicil', 'Payment', 'Komitmen Bayar', '-'], true).setAllowInvalid(true).build();
+      sh.getRange(POOL_DROW, 10, matrix.length, 1).setDataValidation(hasilRule);
 
-    // tint 🟡 body cells light amber so Ade knows what's hers to fill
-    sh.getRange(POOL_DROW, 9, matrix.length, 4).setBackground(UI.AMBER_BODY);
+      // tint 🟡 body cells light amber so Ade knows what's hers to fill
+      sh.getRange(POOL_DROW, 9, matrix.length, 4).setBackground(UI.AMBER_BODY);
+    }
 
     // status highlight: Lunas green · Partial amber · Open red · tier (col 21) by letter
     const statusRange = sh.getRange(POOL_DROW, 17, matrix.length, 1);
@@ -1167,13 +1199,15 @@ function writePoolTab(name, rows, pool, preservedOverride) {
 
   // 5) Range protection — lock the 🔴 script-owned columns; leave only the
   //    four 🟡 columns (9–12, data rows) editable for Ade. Owner keeps full access.
-  const prot = sh.protect()
-    .setDescription('ROSH AccurateSync — kolom 🔴 dikunci. Hanya 🟡 (Channel, Hasil Negosiasi, Tgl Follow-up, Bukti Transfer) yang bisa diedit.');
+  const prot = sh.protect().setDescription(viewOnly
+    ? 'ROSH AccurateSync — tab pantau. SEMUA kolom read-only; kolom 🟡 hanya diisi oleh AR Officer (' + CONFIG.AR_OFFICER_NAME + ').'
+    : 'ROSH AccurateSync — kolom 🔴 dikunci. Hanya 🟡 (Channel, Hasil Negosiasi, Tgl Follow-up, Bukti Transfer) yang bisa diedit.');
   // setWarningOnly(true): shows a warning popup on protected cells without needing
   // userinfo.email scope (getEditors/removeEditor required that scope and caused
   // "Specified permissions are not sufficient" errors on every sync).
   const yRows = Math.max(rows.length, 1);
-  prot.setUnprotectedRanges([sh.getRange(POOL_DROW, 9, yRows, 4)]);
+  // viewOnly → leave NOTHING unprotected, so even the 🟡 columns are locked.
+  prot.setUnprotectedRanges(viewOnly ? [] : [sh.getRange(POOL_DROW, 9, yRows, 4)]);
   prot.setWarningOnly(true);
 
   return sh;

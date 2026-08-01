@@ -39,7 +39,10 @@ var THPH_HEADERS = ['periode', 'role', 'nama', 'thp', 'base',
 // LEDGER — get-or-create hidden sheet, upsert one row by (periode, role).
 // ─────────────────────────────────────────────────────────────────────────────
 function _thpHistorySheet() {
-  const ss = _ss();
+  // ALWAYS the master file, never _ss()/TARGET_SS. The archive is a single store by
+  // design; when the tab renders into Deden's file (TARGET_SS = his sheet) a relative
+  // lookup would create an empty ledger there and show "belum ada riwayat".
+  const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
   let sh = ss.getSheetByName(THPH_SHEET);
   if (!sh) {
     sh = ss.insertSheet(THPH_SHEET);
@@ -147,18 +150,51 @@ function _thpSparkline(values, color) {
   return '=SPARKLINE({' + values.join(';') + '}, {"charttype","column";"color1","' + color + '";"empty","zero"})';
 }
 
-function writeThpHistoryTab() {
+// Invoices ISSUED per calendar month for one salesman, keyed 'yyyy-MM' → {count, value}.
+// Computed live from the Pass-1 invoice list (NOT stored in the ledger) so past months
+// backfill themselves instead of showing blanks for every month recorded before this
+// column existed. Zero API cost — `invoices` is already in memory.
+//
+// NB this is BILLED, not collected: it answers "berapa yang gue terbitkan bulan itu"
+// next to "berapa yang masuk kas" (Collected). The two never tie out in one month —
+// invoice terbit akhir bulan baru masuk kas bulan berikutnya.
+function buildMonthlyIssued(invoices, salesName) {
+  const out = {};
+  if (!invoices) return out;
+  _bySalesman(invoices, salesName).forEach(function(i) {
+    if (!i.transDate) return;
+    const k = Utilities.formatDate(i.transDate, 'GMT+7', 'yyyy-MM');
+    const a = out[k] || (out[k] = { count: 0, value: 0 });
+    a.count += 1;
+    a.value += num(i.total);
+  });
+  return out;
+}
+
+function _issuedText(m) {
+  return m ? (m.count + ' faktur · ' + rupiah(m.value)) : '—';
+}
+
+/** @param invoices Pass-1 list (for the Invoice Terbit column). @param role 'master' | 'deden'.
+ *  role 'deden' renders the SALES section ONLY — his file must never show Ade's THP. */
+function writeThpHistoryTab(invoices, role) {
+  const forDeden = (role === 'deden');
   const sh = uiSheet(CONFIG.TABS.THP_HISTORY);
-  const SPAN = 9;
+  const SPAN = 10;
   const pct = function(x) { return x == null ? '—' : (x * 100).toFixed(0) + '%'; };
   const rows = _readThpHistory();
+  const issued = buildMonthlyIssued(invoices, CONFIG.SALES_NAME);
   let r = 1;
 
   r = uiBanner(sh, r, SPAN,
     '📈 Riwayat THP & KPI — arsip per bulan',
-    'Jejak take-home pay & rincian komponennya tiap bulan · master-only · ' +
-    'bulan berjalan = angka hidup (update tiap sync), bulan lalu = nilai terakhir bulan itu. ' +
-    'THP Sales = Base + Tunjangan + Komisi · THP AR = Pokok + Ops + Komisi.',
+    (forDeden
+      ? 'Rekap take-home pay kamu tiap bulan beserta rincian komponennya. Bulan berjalan = angka hidup ' +
+        '(ikut berubah tiap sync), bulan lalu = nilai terakhir bulan itu. THP = Base + Tunjangan + Komisi. ' +
+        '"Invoice Terbit" = faktur yang kamu terbitkan bulan itu (nilai tagihan, bukan uang masuk).'
+      : 'Jejak take-home pay & rincian komponennya tiap bulan · master-only · ' +
+        'bulan berjalan = angka hidup (update tiap sync), bulan lalu = nilai terakhir bulan itu. ' +
+        'THP Sales = Base + Tunjangan + Komisi · THP AR = Pokok + Ops + Komisi.'),
     UI.INK, UI.BAND);
   r += 1;
 
@@ -167,60 +203,65 @@ function writeThpHistoryTab() {
   if (!rows.sales.length) {
     r = _emptyHistRow(sh, r, SPAN);
   } else {
-    uiHeaderRow(sh, r, ['Periode', 'Skor KPI', 'Collected', 'NOO', 'Base', 'Tunjangan', 'Komisi', 'THP', 'Diperbarui']); r += 1;
+    uiHeaderRow(sh, r, ['Periode', 'Skor KPI', 'Invoice Terbit', 'Collected', 'NOO', 'Base', 'Tunjangan', 'Komisi', 'THP', 'Diperbarui']); r += 1;
     if (rows.sales.length >= 2) r = _trendRow(sh, r, SPAN, rows.sales, UI.GREEN);
     rows.sales.slice().reverse().forEach(function(rec) {   // newest first
       sh.getRange(r, 1, 1, SPAN).setValues([[
-        _periodeLabel(rec.periode), pct(rec.skor), rupiah(rec.collected),
+        _periodeLabel(rec.periode), pct(rec.skor),
+        _issuedText(issued[_periodeKey(rec.periode)]), rupiah(rec.collected),
         (rec.noo == null ? '—' : rec.noo + ' outlet'),
         rupiah(rec.base), rupiah(rec.komponen2), rupiah(rec.komisi), rupiah(rec.thp), rec.updated
       ]]).setVerticalAlignment('middle');
       sh.getRange(r, 1).setFontWeight('bold');
-      sh.getRange(r, 3, 1, 6).setHorizontalAlignment('right');      // collected..THP
-      sh.getRange(r, 8).setFontWeight('bold').setFontColor(UI.GREEN);
-      sh.getRange(r, 9).setFontColor(UI.NOTE).setFontSize(9);
+      sh.getRange(r, 3, 1, 7).setHorizontalAlignment('right');      // invoice terbit..THP
+      sh.getRange(r, 9).setFontWeight('bold').setFontColor(UI.GREEN);
+      sh.getRange(r, 10).setFontColor(UI.NOTE).setFontSize(9);
       r += 1;
     });
   }
   r += 1;
 
-  // ── THP AR (Ade) — full component breakdown ──
-  r = uiSection(sh, r, SPAN, 'THP AR — ' + CONFIG.AR_OFFICER_NAME, UI.BLUE);
-  if (!rows.ar.length) {
-    r = _emptyHistRow(sh, r, SPAN);
-  } else {
-    uiHeaderRow(sh, r, ['Periode', 'Masuk Kas', 'Pokok', 'Ops', 'Komisi', 'THP', '', '', 'Diperbarui']); r += 1;
-    if (rows.ar.length >= 2) r = _trendRow(sh, r, SPAN, rows.ar, UI.GREEN);
-    rows.ar.slice().reverse().forEach(function(rec) {
-      // ledger: base = pokok (AR_BASE), komponen2 = ops (AR_TUNJANGAN_OPS), komisi = komisi.
-      sh.getRange(r, 1, 1, SPAN).setValues([[
-        _periodeLabel(rec.periode), rupiah(rec.collected), rupiah(rec.base), rupiah(rec.komponen2),
-        rupiah(rec.komisi), rupiah(rec.thp), '', '', rec.updated
-      ]]).setVerticalAlignment('middle');
-      sh.getRange(r, 1).setFontWeight('bold');
-      sh.getRange(r, 2, 1, 5).setHorizontalAlignment('right');      // masuk kas..THP
-      sh.getRange(r, 6).setFontWeight('bold').setFontColor(UI.GREEN);
-      sh.getRange(r, 9).setFontColor(UI.NOTE).setFontSize(9);
-      r += 1;
-    });
+  // ── THP AR (Ade) — full component breakdown. SKIPPED on Deden's file (salary isolation). ──
+  if (!forDeden) {
+    r = uiSection(sh, r, SPAN, 'THP AR — ' + CONFIG.AR_OFFICER_NAME, UI.BLUE);
+    if (!rows.ar.length) {
+      r = _emptyHistRow(sh, r, SPAN);
+    } else {
+      uiHeaderRow(sh, r, ['Periode', 'Masuk Kas', 'Pokok', 'Ops', 'Komisi', 'THP', '', '', '', 'Diperbarui']); r += 1;
+      if (rows.ar.length >= 2) r = _trendRow(sh, r, SPAN, rows.ar, UI.GREEN);
+      rows.ar.slice().reverse().forEach(function(rec) {
+        // ledger: base = pokok (AR_BASE), komponen2 = ops (AR_TUNJANGAN_OPS), komisi = komisi.
+        sh.getRange(r, 1, 1, SPAN).setValues([[
+          _periodeLabel(rec.periode), rupiah(rec.collected), rupiah(rec.base), rupiah(rec.komponen2),
+          rupiah(rec.komisi), rupiah(rec.thp), '', '', '', rec.updated
+        ]]).setVerticalAlignment('middle');
+        sh.getRange(r, 1).setFontWeight('bold');
+        sh.getRange(r, 2, 1, 5).setHorizontalAlignment('right');      // masuk kas..THP
+        sh.getRange(r, 6).setFontWeight('bold').setFontColor(UI.GREEN);
+        sh.getRange(r, 10).setFontColor(UI.NOTE).setFontSize(9);
+        r += 1;
+      });
+    }
+    r += 1;
   }
-  r += 1;
 
   uiFootnote(sh, r, SPAN,
     '⚙️ Arsip otomatis tiap sync (jam 5 pagi) dari data Accurate — jangan edit manual. Kolom "Diperbarui" = ' +
     'kapan baris itu terakhir di-refresh; bulan berjalan ikut tiap sync, bulan lalu beku di sync terakhir bulan itu. ' +
+    '"Invoice Terbit" dihitung ulang tiap sync dari tanggal faktur, jadi bulan lama pun ikut terisi. ' +
     'Untuk mengunci angka final bulan ini secara presisi, jalankan "Run Full Sync now" di malam terakhir bulan ' +
     '(koleksi hari terakhir setelah jam 5 pagi belum tertangkap di sync rutin). Tren = THP per bulan (muncul setelah ≥2 bulan).');
 
   sh.setColumnWidth(1, 140);   // Periode (e.g. "September 2026")
   sh.setColumnWidth(2, 110);
-  sh.setColumnWidth(3, 140);
-  sh.setColumnWidth(4, 95);
-  sh.setColumnWidth(5, 120);
+  sh.setColumnWidth(3, 200);   // Invoice Terbit ("62 faktur · Rp215.400.000")
+  sh.setColumnWidth(4, 140);
+  sh.setColumnWidth(5, 95);
   sh.setColumnWidth(6, 120);
-  sh.setColumnWidth(7, 130);
-  sh.setColumnWidth(8, 140);
-  sh.setColumnWidth(9, 110);   // Diperbarui
+  sh.setColumnWidth(7, 120);
+  sh.setColumnWidth(8, 130);
+  sh.setColumnWidth(9, 140);
+  sh.setColumnWidth(10, 110);  // Diperbarui
   sh.setFrozenRows(2);
   return sh;
 }

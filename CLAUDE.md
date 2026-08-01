@@ -18,7 +18,7 @@ the versioned copies.
 | `Code.gs` | OAuth2, credentials (Script Properties), db-list/open-db session, HMAC signing (off), HTTP+308 helper, `onOpen` menu |
 | `Sync.gs` | Invoice fetch + `normalizeInvoice`, customer-contact lookup, **bulk receipts** (`buildReceiptsByInvoice` → index by invoice id; `enrichReceipts` consumes the map, no per-invoice `detail.do`), Pool A/B classify, handover (>14d), sheet writers, sync trigger |
 | `Kpi.gs` | Sales KPI + AR Officer KPI math (take-home pay, bonuses, penalty flags) |
-| `ThpHistory.gs` | 📈 Riwayat THP (master-only): monthly payroll/KPI **archive** — fixes "every sync overwrites, no history". Hidden ledger `_ThpHistory` **upsert-by-(periode,role)** (`recordThpHistory` ← `sales`/`ar` structs, AR skipped pre-onboard via `notStarted`): current month = live re-stamp each sync, prior months **auto-freeze** once the calendar rolls over (no extra trigger, no period-parameterised KPI). `writeThpHistoryTab` renders two stacked tables (Sales: skor/collected/NOO/THP · AR: masuk kas/komisi/THP), newest-first + inline-array column SPARKLINE THP trend. NOT redundant with `_MetricSnapshots` (that = daily AR-health; this = monthly per-person pay). Zero new Accurate calls/scope. `_thpHistorySheet`/`_upsertThpRow`/`_readThpHistory`/`writeThpHistoryTab` |
+| `ThpHistory.gs` | 📈 Riwayat THP (master + **Deden**, lihat catatan per-role di bawah): monthly payroll/KPI **archive** — fixes "every sync overwrites, no history". Hidden ledger `_ThpHistory` **upsert-by-(periode,role)** (`recordThpHistory` ← `sales`/`ar` structs, AR skipped pre-onboard via `notStarted`): current month = live re-stamp each sync, prior months **auto-freeze** once the calendar rolls over (no extra trigger, no period-parameterised KPI). `writeThpHistoryTab` renders two stacked tables (Sales: skor/collected/NOO/THP · AR: masuk kas/komisi/THP), newest-first + inline-array column SPARKLINE THP trend. NOT redundant with `_MetricSnapshots` (that = daily AR-health; this = monthly per-person pay). Zero new Accurate calls/scope. `_thpHistorySheet`/`_upsertThpRow`/`_readThpHistory`/`writeThpHistoryTab` |
 | `Health.gs` | Business Health (master-only): AR aging waterfall, DSO, collected-vs-billed MTD, top debtors + **daily trend snapshots** (hidden `_MetricSnapshots`, upsert-by-date) driving SPARKLINE trends. `computeBusinessHealth`/`recordMetricSnapshot`/`writeHealthSections`. **Folded into the `📋 Ringkasan` tab (no separate tab since 2026-06-05)** — `writeHealthSections(sh,row,m,span)` appends RINGKAS/AGING/TREN/TOP DEBITUR below the Summary, master only. Pure projection of the enriched `invoices`+`ctx` — zero new Accurate calls/scope |
 | `Route.gs` | Rute Penagihan: aggregate Ade's open AR by customer, zona grouping (`Zona (auto)` from address-text regex `_zonaFromAddress`, geocode fallback + Ade override), zona priority (Σ Rp × umur), nearest-neighbour stop ordering from Maps pins / geocoded coords, `Tier (4bln)` + `Tipe Dispatch` (`_dispatchType`: Solo/Nearest/Rute/Antri) cols, `🗺️ Rute Penagihan` writer. Built-in Maps geocoder + `_PinCache`/`_GeoCache` |
 | `Pesan.gs` | Pesan Penagihan: ready-to-send WA messages **group-by-customer** (1 pesan gabung faktur window H-1→H+14) via `buildPenagihanBatch`. `_waPhone` normalize, `_penagihanMessageBatch` (tone semi-formal per bucket H-1/H+3/H+7/H+14, direvisi 2026-07-28 pasca komplain partner + tier A/B soften + bank instr + CTA bukti transfer), `_waLinkFormula` (wa.me prefill), `✉️ Pesan Penagihan` writer. Master-only |
@@ -245,7 +245,28 @@ Sheet file per person**, fed by the same sync:
 
 - **Master `Tracker Invoice`** (owner = Roshan, never shared to staff) — all tabs.
 - **Ade file** (`ROSH AR — Ade`, shared **Editor**) — Summary (AR-scoped) + Pool A + Pool B + KPI Matriks AR.
-- **Deden file** (`ROSH Tagihan — Deden`, shared **Viewer**) — Summary (Sales-scoped) + Tagihan Sales + KPI Matriks Sales.
+- **Deden file** (`ROSH Tagihan — Deden`, shared **Viewer**) — Summary (Sales-scoped) + Tagihan Sales + **Pool B (scoped to his own customers)** + KPI Matriks Sales + **📈 Riwayat THP (section SALES saja)**.
+
+**📈 Riwayat THP di file Deden (2026-08-01):** `writeThpHistoryTab(invoices, role)` sekarang bertanda tangan
+dua argumen. `role='deden'` **melewati section THP AR sepenuhnya** — isolasi gaji, dia tak boleh lihat THP Ade.
+Dua hal yang membuat ini bisa jalan di file role: (a) `_thpHistorySheet()` sekarang **selalu**
+`openById(CONFIG.SHEET_ID)`, bukan `_ss()` — kalau relatif, render di file Deden akan bikin ledger `_ThpHistory`
+kosong baru di sana dan tabnya tampil "belum ada riwayat"; (b) `SPAN` naik 9 → **10**.
+Kolom baru **`Invoice Terbit`** (kolom 3) = `buildMonthlyIssued(invoices, CONFIG.SALES_NAME)`, dihitung
+**live dari `transDate` tiap sync, TIDAK disimpan di ledger** — sengaja, supaya bulan-bulan lama (Juni/Juli)
+ikut terisi, bukan blank karena kolomnya belum ada waktu baris itu dibekukan. Teks `"62 faktur · Rp215.400.000"`.
+Ini **nilai tagihan terbit, bukan uang masuk** — tak akan pernah sama dengan Collected di bulan yang sama.
+
+**Pool B di file Deden (2026-08-01):** `_poolBySalesman(poolB, CONFIG.SALES_NAME)` menyaring Pool B ke
+invoice yang salesman-nya Deden (match case-insensitive full name ATAU first name; `""` = POS/online tak
+pernah ikut) — `poolRow` sekarang membawa `salesman` khusus untuk ini (bukan kolom, tidak muncul di sheet).
+Ditulis pakai `writePoolTab` yang sama + map `yB` yang sama, jadi Deden ikut lihat 🟡 follow-up Ade. Banner
+pakai `subtitleOverride` (param ke-5 `writePoolTab`) supaya jelas ini **pantau saja** — penagihan tetap Ade.
+Deden = Viewer di file-nya, jadi 🟡 tetap tak bisa dia isi. Pool A **tidak** ikut (legacy, pra-onboard, bukan urusan sales).
+⚠️ **`orderTabs()` (Style.gs) diperbaiki bareng ini:** dulu posisi tujuan = INDEKS di array 16 tab → di file
+role (Deden cuma ~4 sheet) `moveActiveSheet(14)` melempar **"Invalid argument"** dan meng-abort `fullSync`
+di ujung. Sekarang pakai counter `pos` yang cuma menghitung tab yang benar-benar ada → hasil identik di
+master, aman dipanggil di file role mana pun.
 
 **How:** `fullSync` computes once, then writes to each file by swapping `TARGET_SS` (Sync.gs) — `_ss()`
 returns `TARGET_SS || master`, so every writer (incl. `uiSheet`/`orderTabs`) redirects with no rewrite.

@@ -60,15 +60,9 @@ const CONFIG = {
   SALES_OMZET_TARGET: 100000000,   // Rp100jt collected → 100% omzet
   SALES_COMMISSION_RATE: 0.0125,   // 1.25% on collected above target
   SALES_COMMISSION_FLOOR: 100000000, // komisi only on collected above Rp100jt
-  // Sejak bulan ini, BASIS komisi = kas yang cair SEBELUM faktur pindah ke Ade (H+15) saja.
-  // Kas post-handover ditagih Ade dan sudah dibayar komisi 1,5–3,5% ke dia; dulu kas yang
-  // sama juga menambah komisi Deden → satu penagihan dibayar dua kali. Omzet (bobot 45%)
-  // TETAP menghitung seluruh kas — yang berubah hanya basis komisi. Floor tetap Rp100jt
-  // (keputusan Bro 2026-08-02; konsekuensinya komisi jadi jarang cair karena kas
-  // pre-handover jarang tembus 100jt — lihat memo). Bulan SEBELUM tanggal ini tetap pakai
-  // basis lama supaya re-stamp tidak memotong gaji yang sudah dibayar secara surut.
-  // Kosongkan ('') untuk kembali ke aturan lama. yyyy-MM (atau yyyy-MM-dd), GMT+7.
-  SALES_COMMISSION_PREHANDOVER_FROM: '2026-08',
+  // BASIS komisi = SELURUH kas masuk bulan itu atas faktur Deden, termasuk kas yang cair
+  // setelah faktur pindah ke Ade (H+15). Sempat dipotong ke kas pre-handover saja
+  // (2026-08-02), dibatalkan 2026-08-03 — mesinnya dicabut, lihat memo.
   NOO_TARGET: 5,                   // new outlets/month target
 
   // Sales KPI weights & caps
@@ -248,7 +242,6 @@ function onOpen() {
     .addItem('Clear Faktur PDF cache', 'clearFakturCache')
     .addSeparator()
     .addItem('Hitung ulang Riwayat THP bulan lalu', 'restampPreviousMonthNow')
-    .addItem('Simulasi komisi pre-handover (read-only)', 'diagKomisiPreHandover')
     .addItem('Refresh Restock (item + SKU sales)', 'refreshSkuSalesNow')
     .addItem('Refresh Kontak Customer', 'refreshKontakNow')
     .addItem('Rebuild Kontak cache (wipe + refetch)', 'rebuildKontakCacheNow')

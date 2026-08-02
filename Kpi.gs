@@ -2,7 +2,9 @@
  * ROSH × Accurate — KPI math + THP writers + Summary.
  *
  * Sales KPI  → Memo KPI Sales (Deden). THP = Base 3.5jt + Tunjangan(score×3.5jt,
- *              cap 106%) + Komisi(1.25% × MAX(collected−100jt, 0)).
+ *              cap 106%) + Komisi(1.25% × MAX(basis−100jt, 0)).
+ *              Basis komisi = kas PRE-HANDOVER saja sejak SALES_COMMISSION_PREHANDOVER_FROM
+ *              (2026-08); sebelum itu seluruh kas. Omzet selalu seluruh kas.
  *              Weights: Omzet 45% (cap100%) · Cashflow 25% (cap100%) ·
  *                       Diskon 20% (cap120%, 7-tier) · NOO 10% (cap120%).
  *
@@ -25,18 +27,51 @@ function _inThisMonth(d) {
 }
 function _monthLabel() { return Utilities.formatDate(new Date(), 'GMT+7', 'MMMM yyyy'); }
 
+// Bulan pertama basis komisi Sales dipotong ke kas pre-handover (Date, awal bulan).
+// Kosong / tak valid = kebijakan lama (seluruh kas) berlaku selamanya.
+function _commPreHandoverFrom() {
+  const m = String(CONFIG.SALES_COMMISSION_PREHANDOVER_FROM || '').match(/^(\d{4})-(\d{2})/);
+  return m ? new Date(+m[1], +m[2] - 1, 1) : new Date(9999, 0, 1);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SALES KPI  (Deden Sunandar)
 // ─────────────────────────────────────────────────────────────────────────────
-function computeSalesKpi(invoices) {
+/**
+ * @param invoices   Pass-1 list, already enriched (needs `.receipts`).
+ * @param monthStart OPTIONAL first day of the month to compute. Omit = current month
+ *   (every existing caller). Passing a past month lets restampMonth (ThpHistory.gs)
+ *   recompute a CLOSED month from live receipt data — the ledger row for a month freezes
+ *   at whatever the last in-month sync saw, so payments entered into Accurate after that
+ *   sync but dated in that month were silently lost (Juli 2026: Rp9.063.960, komisi
+ *   Deden Rp181.572 vs Rp294.872 seharusnya).
+ *
+ * Month scoping reads `i.receipts` (full history, attached to every invoice by
+ * enrichReceipts) instead of the precomputed `i.receiptsThisMonth`, so it works for any
+ * month. For the current month the two are identical by construction: same receipts, same
+ * `_inThisMonth` window, same collectionBucket call.
+ */
+function computeSalesKpi(invoices, monthStart) {
   const isDeden = function(i) { return i.salesman === CONFIG.SALES_NAME; };
+  const ms = monthStart || _monthStart();
+  const me = new Date(ms.getFullYear(), ms.getMonth() + 1, 1);
+  const inMonth = function(d) { return !!d && d >= ms && d < me; };
 
-  // 1) Omzet — exact cash collected this month on Deden's invoices.
-  let collected = 0, onTimeCollected = 0;
+  // 1) Omzet — exact cash collected in the month on Deden's invoices.
+  //    `collected`            = SEMUA kas → skor omzet (bobot 45%). Deden yang menciptakan
+  //                             penjualannya, jadi kas apa pun tetap diakui di sini.
+  //    `collectedPreHandover` = kas yang cair SEBELUM faktur pindah ke Ade (H+15) → BASIS
+  //                             KOMISI sejak SALES_COMMISSION_PREHANDOVER_FROM. Kas setelah
+  //                             handover ditagih Ade dan sudah dibayar komisi 1,5–3,5% ke dia;
+  //                             menghitungnya lagi untuk Deden = bayar dua kali satu penagihan.
+  let collected = 0, onTimeCollected = 0, collectedPreHandover = 0;
   invoices.filter(isDeden).forEach(function(i) {
-    i.receiptsThisMonth.forEach(function(r) {
+    (i.receipts || []).forEach(function(r) {
+      if (!inMonth(r.date)) return;
+      const dov = i.dueDate ? Math.floor((r.date - i.dueDate) / DAY_MS) : null;
       collected += r.amount;
-      if (r.bucket === 'ontime') onTimeCollected += r.amount;
+      if (collectionBucket(dov) === 'ontime') onTimeCollected += r.amount;
+      if (!i.handoverDate || r.date < i.handoverDate) collectedPreHandover += r.amount;
     });
   });
   const omzetAchv  = collected / CONFIG.SALES_OMZET_TARGET;
@@ -48,7 +83,7 @@ function computeSalesKpi(invoices) {
 
   // 3) Diskon — TotalDiskon / TotalOmzetBruto on Deden's invoices issued this month.
   let sumBruto = 0, sumDiskon = 0;
-  invoices.filter(function(i) { return isDeden(i) && _inThisMonth(i.transDate); }).forEach(function(i) {
+  invoices.filter(function(i) { return isDeden(i) && inMonth(i.transDate); }).forEach(function(i) {
     sumBruto  += i.subTotal;
     sumDiskon += i.cashDiscount;
   });
@@ -65,7 +100,7 @@ function computeSalesKpi(invoices) {
   });
   let noo = 0;
   Object.keys(firstSeen).forEach(function(c) {
-    if (_inThisMonth(firstSeen[c].date) && firstSeen[c].salesman === CONFIG.SALES_NAME) noo++;
+    if (inMonth(firstSeen[c].date) && firstSeen[c].salesman === CONFIG.SALES_NAME) noo++;
   });
   const nooScore = clamp(noo / CONFIG.NOO_TARGET, 0, CONFIG.CAP_NOO);
 
@@ -80,11 +115,20 @@ function computeSalesKpi(invoices) {
   const base = CONFIG.SALES_BASE;
   const tunjanganScore = clamp(totalScore, 0, CONFIG.SALES_TUNJANGAN_CAP); // cap 106%
   const tunjangan = Math.round(tunjanganScore * CONFIG.SALES_TUNJANGAN_MULT);
-  const commission = Math.round(Math.max(0, collected - CONFIG.SALES_COMMISSION_FLOOR) * CONFIG.SALES_COMMISSION_RATE);
+  // Basis komisi: kas pre-handover, TAPI hanya untuk bulan sejak tanggal efektif kebijakan.
+  // Bulan sebelum itu tetap pakai basis lama (seluruh kas) supaya re-stamp / hitung ulang
+  // TIDAK memotong gaji yang sudah dibayar secara surut. Keputusan 2026-08-02, lihat
+  // ROSH Finance/2026-08-02_MEMO_Komisi-Sales-Kas-Post-Handover.html.
+  const preHandoverRule = ms >= _commPreHandoverFrom();
+  const commissionBase  = preHandoverRule ? collectedPreHandover : collected;
+  const commission = Math.round(Math.max(0, commissionBase - CONFIG.SALES_COMMISSION_FLOOR) * CONFIG.SALES_COMMISSION_RATE);
   const thp = base + tunjangan + commission;
 
   return {
     collected: collected, onTimeCollected: onTimeCollected,
+    collectedPreHandover: collectedPreHandover,
+    collectedPostHandover: collected - collectedPreHandover,
+    commissionBase: commissionBase, preHandoverRule: preHandoverRule,
     omzetAchv: omzetAchv, omzetScore: omzetScore,
     cashRate: cashRate, cashScore: cashScore,
     diskonRatio: diskonRatio, diskonScore: diskonScore, sumBruto: sumBruto, sumDiskon: sumDiskon,
@@ -152,8 +196,13 @@ function writeThpSalesTab(k) {
   r = _arRow(sh, r, 'Base', rupiah(k.base), '', 'Fixed');
   r = _arRow(sh, r, 'Tunjangan KPI', rupiah(k.tunjangan), '',
       'Skor × ' + rupiah(CONFIG.SALES_TUNJANGAN_MULT) + ' (cap 106% = ' + rupiah(capTunjangan) + ')');
-  r = _arRow(sh, r, 'Komisi 1.25%', rupiah(k.commission), '',
-      'Atas collected di atas ' + rupiah(CONFIG.SALES_COMMISSION_FLOOR));
+  r = _arRow(sh, r, 'Komisi 1.25%', rupiah(k.commission),
+      (k.preHandoverRule ? 'Basis ' + rupiah(k.commissionBase) : ''),
+      (k.preHandoverRule
+        ? 'Atas kas yang cair SEBELUM H+15, di atas ' + rupiah(CONFIG.SALES_COMMISSION_FLOOR) +
+          '. Kas yang ditagih ' + CONFIG.AR_OFFICER_NAME + ' (' + rupiah(k.collectedPostHandover) +
+          ') tetap masuk omzet, tapi tidak masuk komisi.'
+        : 'Atas collected di atas ' + rupiah(CONFIG.SALES_COMMISSION_FLOOR)));
   r = _arRow(sh, r, 'THP — TOTAL', rupiah(k.thp), 'Floor ' + rupiah(k.base), 'Take-home pay bulan ini');
   sh.getRange(r - 1, 1, 1, SPAN).setBackground(UI.GREEN_SOFT).setFontColor(UI.GREEN).setFontWeight('bold');
   r += 1;

@@ -24,6 +24,7 @@ var UI = {
 // Get-or-create a sheet and wipe it (content + formats + conditional rules).
 function uiSheet(name) {
   const ss = _ss();
+  name = _tabName(name);            // file role bisa punya nama tampilan sendiri (TAB_ALIAS)
   let sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
   sh.clear();
@@ -221,7 +222,7 @@ function orderTabs() {
     CONFIG.TABS.CARA_BACA, CONFIG.TABS.SUMMARY, CONFIG.TABS.RESTOCK, CONFIG.TABS.TODO,
     CONFIG.TABS.PESAN, CONFIG.TABS.STOP_SUPPLY,
     CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.RUTE,
-    CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.TAGIHAN_LAIN, CONFIG.TABS.KONTAK,
+    CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.COLLECTED, CONFIG.TABS.TAGIHAN_LAIN, CONFIG.TABS.KONTAK,
     CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
   ];
   // Position counts only the tabs THIS file actually has. Using the array index would
@@ -230,7 +231,7 @@ function orderTabs() {
   // every tab exists. Keeps orderTabs() safe to call on any target file.
   let pos = 0;
   order.forEach(function(name) {
-    const sh = ss.getSheetByName(name);
+    const sh = ss.getSheetByName(_tabName(name));
     if (!sh) return;
     pos++;
     ss.setActiveSheet(sh);

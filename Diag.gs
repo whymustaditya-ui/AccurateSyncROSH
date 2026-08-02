@@ -123,3 +123,73 @@ function _detailReceipts(invId) {
   out.sort(function(a, b) { return a.date - b.date; });
   return out;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIMULASI KEBIJAKAN — basis komisi 1,25% Deden: SEMUA kas vs kas PRE-HANDOVER saja
+// ─────────────────────────────────────────────────────────────────────────────
+// Konteks: satu rupiah yang ditagih Ade (kas cair setelah handoverDate = JT+15) sekarang
+// dibayar DUA KALI — 1,25% ke Deden lewat komisi Sales, dan 1,5–3,5% ke Ade lewat komisi
+// AR. Usulan: omzet (bobot 45%) tetap menghitung semua kas — Deden yang menciptakan
+// penjualannya — tapi BASIS KOMISI dipotong ke kas yang cair sebelum faktur pindah tangan.
+//
+// Fungsi ini TIDAK mengubah perhitungan apa pun. Read-only, cuma mencetak angka pembanding
+// per bulan supaya keputusan diambil pakai data. Jalankan dari editor ▸ Run, baca di log.
+// @param nBulan berapa bulan ke belakang yang disimulasikan (default 3, termasuk bulan berjalan).
+function diagKomisiPreHandover(nBulan) {
+  // Guard: dipanggil dari menu → argumennya bisa berupa event object, bukan angka.
+  const n = (typeof nBulan === 'number' && nBulan > 0) ? Math.floor(nBulan) : 3;
+  const today = stripTime(new Date());
+  Logger.log('===== SIMULASI basis komisi Deden — ' + n + ' bulan terakhir =====');
+  Logger.log('Aturan sekarang : komisi = ' + (CONFIG.SALES_COMMISSION_RATE * 100) + '% × (SEMUA kas − ' +
+             rupiah(CONFIG.SALES_COMMISSION_FLOOR) + ')');
+  Logger.log('Usulan          : komisi = ' + (CONFIG.SALES_COMMISSION_RATE * 100) + '% × (kas PRE-handover − ' +
+             rupiah(CONFIG.SALES_COMMISSION_FLOOR) + ')   · omzet & skor TIDAK berubah');
+  Logger.log('');
+
+  const invoices = _invoicesForRestamp(today);
+  const mine = invoices.filter(function(i) { return i.salesman === CONFIG.SALES_NAME; });
+  const komisiOf = function(v) {
+    return Math.round(Math.max(0, v - CONFIG.SALES_COMMISSION_FLOOR) * CONFIG.SALES_COMMISSION_RATE);
+  };
+  let sumNow = 0, sumNew = 0;
+
+  for (let k = n - 1; k >= 0; k--) {
+    const ms = new Date(today.getFullYear(), today.getMonth() - k, 1);
+    const me = new Date(ms.getFullYear(), ms.getMonth() + 1, 1);
+    let all = 0, pre = 0;
+    const postList = [];
+    mine.forEach(function(i) {
+      let postInv = 0;
+      (i.receipts || []).forEach(function(r) {
+        if (!r.date || r.date < ms || r.date >= me) return;
+        all += num(r.amount);
+        // pre-handover = kas cair sebelum faktur jadi tanggung jawab Ade (JT+15)
+        if (!i.handoverDate || r.date < i.handoverDate) pre += num(r.amount);
+        else postInv += num(r.amount);
+      });
+      if (postInv > 0) postList.push({ number: i.number, customer: i.customer, amount: postInv,
+                                       dsh: Math.floor((today - i.handoverDate) / DAY_MS) });
+    });
+    const post = all - pre;
+    const kNow = komisiOf(all), kNew = komisiOf(pre);
+    sumNow += kNow; sumNew += kNew;
+
+    Logger.log('── ' + _periodeLabel(Utilities.formatDate(ms, 'GMT+7', 'yyyy-MM')) +
+               (k === 0 ? '  (bulan berjalan, belum penuh)' : ''));
+    Logger.log('   Kas masuk total        : ' + rupiah(all));
+    Logger.log('   ├─ pre-handover (Deden): ' + rupiah(pre) + '  (' + (all ? Math.round(pre / all * 100) : 0) + '%)');
+    Logger.log('   └─ post-handover (Ade) : ' + rupiah(post) + '  (' + (all ? Math.round(post / all * 100) : 0) + '%) · ' +
+               postList.length + ' faktur');
+    Logger.log('   Komisi SEKARANG        : ' + rupiah(kNow));
+    Logger.log('   Komisi USULAN          : ' + rupiah(kNew) + '   → selisih ' + rupiah(kNew - kNow));
+    postList.sort(function(a, b) { return b.amount - a.amount; }).slice(0, 5).forEach(function(p) {
+      Logger.log('      · post-handover: ' + p.number + ' · ' + p.customer + ' · ' + rupiah(p.amount));
+    });
+  }
+
+  Logger.log('');
+  Logger.log('TOTAL ' + n + ' bulan — komisi sekarang ' + rupiah(sumNow) + ' vs usulan ' + rupiah(sumNew) +
+             '  → Deden ' + (sumNew < sumNow ? 'turun ' : 'naik ') + rupiah(Math.abs(sumNow - sumNew)) +
+             ' (rata-rata ' + rupiah(Math.round(Math.abs(sumNow - sumNew) / n)) + '/bulan)');
+  Logger.log('===== selesai — TIDAK ada perhitungan yang diubah =====');
+}

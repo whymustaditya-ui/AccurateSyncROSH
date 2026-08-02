@@ -46,6 +46,11 @@ const CONFIG = {
   // Invoice Sales tab shows ONLY these salespeople (first-name match, case-insensitive).
   // Tab filters out POS/online and any other salesman. Sales KPI math still keys on SALES_NAME.
   SALES_FILTER: ['Deden', 'Dian'],
+  // Arsip THP: berapa hari pertama bulan baru sync masih menghitung ULANG bulan lalu
+  // (restampPreviousMonth, ThpHistory.gs). Menangkap bukti transfer yang dientri ke
+  // Accurate setelah sync terakhir bulan itu tapi bertanggal bulan itu. Lewat batas ini
+  // baris bulan lalu beku permanen — payroll yang sudah ditutup tak bisa berubah diam-diam.
+  THP_RESTAMP_DAYS: 7,
 
   // ── Sales KPI (Memo KPI Sales Deden) ──
   // THP = Base 3.5jt + Tunjangan(TotalScore × 3.5jt, cap 106%) + Komisi(1.25% × MAX(collected−100jt,0))
@@ -55,6 +60,15 @@ const CONFIG = {
   SALES_OMZET_TARGET: 100000000,   // Rp100jt collected → 100% omzet
   SALES_COMMISSION_RATE: 0.0125,   // 1.25% on collected above target
   SALES_COMMISSION_FLOOR: 100000000, // komisi only on collected above Rp100jt
+  // Sejak bulan ini, BASIS komisi = kas yang cair SEBELUM faktur pindah ke Ade (H+15) saja.
+  // Kas post-handover ditagih Ade dan sudah dibayar komisi 1,5–3,5% ke dia; dulu kas yang
+  // sama juga menambah komisi Deden → satu penagihan dibayar dua kali. Omzet (bobot 45%)
+  // TETAP menghitung seluruh kas — yang berubah hanya basis komisi. Floor tetap Rp100jt
+  // (keputusan Bro 2026-08-02; konsekuensinya komisi jadi jarang cair karena kas
+  // pre-handover jarang tembus 100jt — lihat memo). Bulan SEBELUM tanggal ini tetap pakai
+  // basis lama supaya re-stamp tidak memotong gaji yang sudah dibayar secara surut.
+  // Kosongkan ('') untuk kembali ke aturan lama. yyyy-MM (atau yyyy-MM-dd), GMT+7.
+  SALES_COMMISSION_PREHANDOVER_FROM: '2026-08',
   NOO_TARGET: 5,                   // new outlets/month target
 
   // Sales KPI weights & caps
@@ -166,6 +180,7 @@ const CONFIG = {
     THP_SALES:     '📊 KPI Matriks Sales',   // Sales KPI + take-home pay
     THP_HISTORY:   '📈 Riwayat THP',         // monthly payroll/KPI archive per person (ThpHistory.gs, master-only)
     INVOICE_SALES: '🧾 Tagihan Sales',       // unpaid & overdue ≤14d (still with Sales, pre-handover) — Deden & Dian only
+    COLLECTED:     '💰 Faktur Collected',    // rincian faktur per bulan uang masuk (Collected.gs, file Deden saja)
     TAGIHAN_LAIN:  '🧾 Tagihan Lain',         // pre-handover unpaid for everyone NOT in SALES_FILTER (Nathan/partner, POS, others)
     SUMMARY:       '📋 Ringkasan',           // overview
     RESTOCK:       '📦 Restock Engine',      // SKU tiering + reorder point + cash-capped PO (Restock.gs, master-only)
@@ -189,6 +204,30 @@ const CONFIG = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NAMA TAB DI FILE DEDEN (alias tampilan)
+// ─────────────────────────────────────────────────────────────────────────────
+// Nama tab di CONFIG.TABS ditulis dari sudut pandang operator AR ("Pool B — Ongoing AR",
+// "KPI Matriks Sales", "THP"). Deden bukan orang AR — dia butuh nama yang langsung
+// menjawab "isi tab ini apa buat gue". Peta ini cuma dipakai saat fullSync menulis ke
+// FILE DEDEN (TAB_ALIAS di Sync.gs); master & file Ade tetap pakai nama aslinya, jadi
+// dokumentasi, collectPoolYellow, dan kebiasaan Ade tidak terganggu.
+//
+// AMAN DIEDIT: ganti sisi kanan kapan saja. Sync berikutnya me-RENAME tab yang sudah ada
+// di tempat (_applyTabAlias), bukan bikin tab baru. Kunci = nama master, jangan diubah.
+var TABS_DEDEN = {};
+TABS_DEDEN[CONFIG.TABS.SUMMARY]       = '📋 Ringkasan';            // tetap — sudah jelas
+TABS_DEDEN[CONFIG.TABS.INVOICE_SALES] = '🧾 Tagihan Kamu';         // yang masih jadi tugas dia (H+0 s/d H+14)
+TABS_DEDEN[CONFIG.TABS.POOL_B]        = '🔵 Faktur Ongoing AR';    // sudah lewat H+14, ditangani Ade, dia pantau
+TABS_DEDEN[CONFIG.TABS.THP_SALES]     = '📊 KPI & Gaji Bulan Ini';
+TABS_DEDEN[CONFIG.TABS.THP_HISTORY]   = '📈 Riwayat Gaji';
+// CONFIG.TABS.COLLECTED sengaja TIDAK di-alias — '💰 Faktur Collected' dipakai apa adanya.
+
+// Migrasi nama yang sempat dipakai lalu diganti. _applyTabAlias me-rename tab lama ini di
+// tempat, jadi tak ada tab yatim tertinggal di file Deden. Boleh dihapus setelah satu sync.
+TABS_DEDEN['⏰ Lewat ke Ade'] = '🔵 Faktur Ongoing AR';
+TABS_DEDEN['💰 Uang Masuk']   = CONFIG.TABS.COLLECTED;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MENU
 // ─────────────────────────────────────────────────────────────────────────────
 function onOpen() {
@@ -208,6 +247,8 @@ function onOpen() {
     .addItem('Set Faktur web app URL', 'setFakturWebAppUrl')
     .addItem('Clear Faktur PDF cache', 'clearFakturCache')
     .addSeparator()
+    .addItem('Hitung ulang Riwayat THP bulan lalu', 'restampPreviousMonthNow')
+    .addItem('Simulasi komisi pre-handover (read-only)', 'diagKomisiPreHandover')
     .addItem('Refresh Restock (item + SKU sales)', 'refreshSkuSalesNow')
     .addItem('Refresh Kontak Customer', 'refreshKontakNow')
     .addItem('Rebuild Kontak cache (wipe + refetch)', 'rebuildKontakCacheNow')

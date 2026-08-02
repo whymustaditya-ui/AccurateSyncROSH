@@ -29,6 +29,30 @@ var DAY_MS = 86400000;
 var SYNC_START = 0;   // set in fullSync(); attachCustomerContacts uses it as a wall-clock budget
 var TARGET_SS = null; // when set, _ss() points writers at this spreadsheet (role files); null = master
 
+// When set, every tab lookup renames itself through this map (nama master → nama tampilan).
+// Dipakai file Deden: dia bukan orang AR, jadi "Pool B — Ongoing AR" / "KPI Matriks Sales"
+// tak berarti apa-apa buat dia. Aliasing dipasang di TIGA chokepoint saja (uiSheet, _tab,
+// writePoolTab) + orderTabs, jadi TIDAK ADA writer yang perlu diubah dan master/Ade tetap
+// pakai nama aslinya. Peta ada di TABS_DEDEN (Code.gs) — aman diedit kapan saja, sheet lama
+// otomatis di-rename di tempat oleh _applyTabAlias (bukan bikin tab baru).
+var TAB_ALIAS = null;
+function _tabName(name) { return (TAB_ALIAS && TAB_ALIAS[name]) || name; }
+
+// Rename tab yang sudah ada di `ss` mengikuti peta alias, SEBELUM writer jalan. Tanpa ini
+// writer akan bikin tab baru bernama alias dan tab lama tertinggal jadi sampah. Idempoten.
+function _applyTabAlias(ss, alias) {
+  if (!ss || !alias) return;
+  Object.keys(alias).forEach(function(oldName) {
+    const newName = alias[oldName];
+    if (!newName || newName === oldName) return;
+    const sh = ss.getSheetByName(oldName);
+    if (!sh) return;                              // sudah ter-rename di sync sebelumnya
+    if (ss.getSheetByName(newName)) return;       // tujuan sudah terpakai — jangan tabrakan
+    try { sh.setName(newName); }
+    catch (e) { Logger.log('Rename tab "' + oldName + '" gagal: ' + e.message); }
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ENTRY POINT
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,6 +149,11 @@ function fullSync() {
     // THP/KPI archive (master-only): upsert this month's Sales+AR figures into the hidden
     // `_ThpHistory` ledger, then render the 📈 Riwayat THP tab from it. Record FIRST so the
     // tab reflects the freshly-stamped current month. Mirrors the snapshot→render order below.
+    // Re-stamp bulan lalu selama grace window (CONFIG.THP_RESTAMP_DAYS) — menangkap
+    // pembayaran yang dientri ke Accurate setelah sync terakhir bulan itu tapi bertanggal
+    // bulan itu. No-op di luar window. FAIL-SOFT: koreksi arsip tak boleh meng-abort sync.
+    try { restampPreviousMonth(invoices, today); }
+    catch (e) { Logger.log('Re-stamp bulan lalu dilewati: ' + e.message); }
     recordThpHistory(sales, ar, today);
     writeThpHistoryTab(invoices, 'master');
     // Business Health (master-only) is now FOLDED INTO the 📋 Ringkasan tab (no separate tab).
@@ -146,12 +175,17 @@ function fullSync() {
       _dropDefaultSheet();
     }
 
-    // ── DEDEN file — Summary (Sales-scoped) + Tagihan Sales + Pool B (his customers) + KPI ──
+    // ── DEDEN file — Summary (Sales-scoped) + Tagihan Sales + Pool B (his customers) +
+    //    Faktur Collected + KPI ──
     // Pool B here is SCOPED TO DEDEN'S OWN CUSTOMERS (_bySalesman) and is informational:
     // once past H+14 the invoice is Ade's to collect, but Deden still needs to see which of
     // his accounts are stuck. Same yB map as master/Ade → he also sees Ade's 🟡 follow-ups.
     if (dedenSS) {
       TARGET_SS = dedenSS;
+      // Nama tab versi Deden (TABS_DEDEN, Code.gs). Rename tab lama di tempat DULU, baru
+      // pasang alias — kalau terbalik, writer bikin tab baru & yang lama jadi sampah.
+      _applyTabAlias(dedenSS, TABS_DEDEN);
+      TAB_ALIAS = TABS_DEDEN;
       const poolBDeden = _bySalesman(poolB, CONFIG.SALES_NAME);
       writeSummaryTab(ctx, 'deden');
       writeInvoiceSalesTab(invoiceSales);
@@ -159,10 +193,16 @@ function fullSync() {
         'Customer kamu yang tagihannya sudah lewat H+14 dan pindah ke ' + CONFIG.AR_OFFICER_NAME +
         '. Penagihan jadi tugas ' + CONFIG.AR_OFFICER_NAME + '; tab ini untuk kamu pantau saja (lihat, tidak diisi).',
         true);                               // viewOnly — semua kolom read-only di file Deden
+      // 💰 Faktur Collected — rincian faktur di balik angka Collected (bulan lalu + bulan ini).
+      // FAIL-SOFT: tab tambahan tak boleh meng-abort sync file Deden (pola blok Restock/Kontak).
+      try {
+        writeCollectedTab(buildCollectedMonths(invoices, CONFIG.SALES_NAME, today));
+      } catch (e) { Logger.log('Faktur Collected dilewati: ' + e.message); }
       writeThpSalesTab(sales);
       writeThpHistoryTab(invoices, 'deden'); // 📈 Riwayat THP — SALES section only (no Ade)
       orderTabs();                           // safe here: positions count only existing tabs
       _dropDefaultSheet();
+      TAB_ALIAS = null;                      // nama tab kembali normal untuk logging/master
     }
 
     TARGET_SS = null;                        // back to master for logging
@@ -174,6 +214,7 @@ function fullSync() {
               ((new Date() - t0) / 1000).toFixed(1) + 's');
   } catch (e) {
     TARGET_SS = null;
+    TAB_ALIAS = null;      // jangan biarkan alias bocor ke run berikutnya / ke _log
     _log('ERROR', e.message);
     throw e;
   }
@@ -523,6 +564,13 @@ function enrichReceipts(invoices, onboard, today) {
   let enriched = 0;
 
   invoices.forEach(function(inv, idx) {
+    // Receipt history is attached to EVERY invoice — the bulk map above already holds the
+    // full history for all of them, so this is pure JS with zero extra API cost. The
+    // needsDetail gate below still guards the heavy pool/commission splits (unchanged
+    // semantics); it just no longer starves consumers that need plain payment history for
+    // PAST months, e.g. 💰 Faktur Collected on Deden's file (Collected.gs) — his invoices
+    // paid last month before handover never passed the gate, so receipts stayed empty.
+    inv.receipts = receiptMap[inv.id] || [];
     const crossed = inv.handoverDate && inv.handoverDate <= today; // already in Ade's hands
     // Default piutang-at-onboard for invoices we won't fetch:
     //   legacy & unpaid (or paid only after onboard) → full balance was open at onboard.
@@ -545,9 +593,8 @@ function enrichReceipts(invoices, onboard, today) {
     try {
       // Bulk-indexed receipts: already filtered (APPROVED, cash excl. PPh) + sorted ascending
       // by buildReceiptsByInvoice — same shape the old detail.do parse produced.
-      const receipts = receiptMap[inv.id] || [];
+      const receipts = inv.receipts;   // attached above from the bulk map
       enriched++;
-      inv.receipts = receipts;
 
       // (a) this-month receipts, bucketed from DUE date → feeds Sales KPI (unchanged semantics)
       const rtm = [];
@@ -1069,7 +1116,8 @@ var POOL_DROW = 4;  // first data row
 // amber "fill me" tint, and nothing left unprotected. Only Ade (AR Officer) fills those.
 function writePoolTab(name, rows, pool, preservedOverride, subtitleOverride, viewOnly) {
   const ss = _ss();
-  let sh = ss.getSheetByName(name);
+  const displayName = _tabName(name);   // file role bisa punya nama tampilan sendiri
+  let sh = ss.getSheetByName(displayName);
   const SPAN = POOL_HEADERS.length;
 
   // 1) Preserve 🟡 columns (Channel/Hasil/Tgl Follow-up/Bukti) keyed by invoice number.
@@ -1085,7 +1133,7 @@ function writePoolTab(name, rows, pool, preservedOverride, subtitleOverride, vie
   }
 
   // 2) Rebuild the sheet.
-  if (!sh) sh = ss.insertSheet(name);
+  if (!sh) sh = ss.insertSheet(displayName);
   sh.clear();
   // sh.clear() does NOT reset frozen panes — a leftover frozenColumns from a
   // prior run makes the full-width banner merge straddle the boundary and throw
@@ -1099,9 +1147,13 @@ function writePoolTab(name, rows, pool, preservedOverride, subtitleOverride, vie
   sh.getProtections(SpreadsheetApp.ProtectionType.RANGE).forEach(function(p) { if (p.canEdit()) p.remove(); });
 
   // banner + narrative subtitle (Pool A = brick red, Pool B = royal blue)
+  // Judul banner ikut nama tampilan kalau tab ini di-alias (file Deden) — biar nama tab
+  // dan judul di dalamnya tidak bilang dua hal berbeda.
   const isA = pool === 'A';
-  uiBanner(sh, 1, SPAN,
-    (isA ? '🔴 Pool A — Stuck AR (Legacy Backlog)' : '🔵 Pool B — Ongoing AR'),
+  const bannerTitle = (displayName !== name)
+    ? displayName
+    : (isA ? '🔴 Pool A — Stuck AR (Legacy Backlog)' : '🔵 Pool B — Ongoing AR');
+  uiBanner(sh, 1, SPAN, bannerTitle,
     (subtitleOverride || (isA
       ? 'Snapshot FROZEN per ' + CONFIG.ADE_ONBOARD_DATE + '. Aging bucket dikunci, list tidak bertambah — burn-down ke Rp0.'
       : 'Invoice yang lewat ke ' + CONFIG.AR_OFFICER_NAME + ' di H+15 setelah onboard. Terus bertambah seiring waktu.')),
@@ -1446,6 +1498,7 @@ function _dropDefaultSheet() {
 function _ss() { return TARGET_SS || SpreadsheetApp.openById(CONFIG.SHEET_ID); }
 function _tab(name, headers) {
   const ss = _ss();
+  name = _tabName(name);            // file role bisa punya nama tampilan sendiri
   let sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
   sh.clear();

@@ -98,6 +98,96 @@ function recordThpHistory(sales, ar, today) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RE-STAMP — recompute a CLOSED month from live data
+// ─────────────────────────────────────────────────────────────────────────────
+// Why: a month's row used to freeze at whatever the LAST IN-MONTH sync saw. Payments
+// entered into Accurate after that sync but DATED in that month never made it in —
+// bukti transfer yang dientri belakangan. Juli 2026: ledger Rp114.525.773 (beku 31/07
+// 11:31) vs live Rp123.589.733 → komisi Deden Rp181.572 padahal seharusnya Rp294.872.
+//
+// Fix: for the first CONFIG.THP_RESTAMP_DAYS days of a new month, every sync recomputes
+// the previous month too and upserts it. After that window the row freezes for good, so
+// a payment backdated months later can't silently reopen closed payroll.
+// Zero new API calls — pure recompute over the invoice list already in memory.
+
+// Ade's komisi + kas masuk for an ARBITRARY month. Mirrors the (c) block in
+// enrichReceipts (Ade window = receipts on/after max(handover, onboard), rate from the
+// LOCKED bucket) but scoped to `ms` instead of the current month. Rounds per invoice,
+// exactly like adeKomisiThisMonth, so a re-stamp of the live month reproduces it.
+function _arMonthFigures(invoices, ms, onboard) {
+  const me = new Date(ms.getFullYear(), ms.getMonth() + 1, 1);
+  let komisi = 0, collectedTotal = 0;
+  (invoices || []).forEach(function(i) {
+    if ((i.pool !== 'A' && i.pool !== 'B') || !i.bucketLock) return;
+    const adeStart = i.handoverDate && i.handoverDate > onboard ? i.handoverDate : onboard;
+    let kElig = 0;
+    (i.receipts || []).forEach(function(r) {
+      if (r.date < adeStart || r.date < ms || r.date >= me) return;
+      kElig += num(r.amount);
+    });
+    if (kElig <= 0) return;
+    collectedTotal += kElig;
+    komisi += Math.round(kElig * rateOf(i.bucketLock));
+  });
+  return { komisi: komisi, collectedTotal: collectedTotal };
+}
+
+/** Recompute + upsert one month's ledger rows from live data. @param ms first day of the month. */
+function restampMonth(invoices, ms, today) {
+  const periode = Utilities.formatDate(ms, 'GMT+7', 'yyyy-MM');
+  const stamp   = Utilities.formatDate(new Date(), 'GMT+7', 'yyyy-MM-dd HH:mm');
+  const s = computeSalesKpi(invoices, ms);
+  _upsertThpRow(periode, 'sales', [
+    periode, 'sales', CONFIG.SALES_NAME, s.thp, s.base,
+    s.tunjangan, s.commission, s.totalScore, s.collected, s.noo, stamp
+  ]);
+
+  // AR only from Ade's onboard month onward (same rule as recordThpHistory's notStarted).
+  const onboard = _onboardDate();
+  let a = null;
+  if (ms >= new Date(onboard.getFullYear(), onboard.getMonth(), 1)) {
+    a = _arMonthFigures(invoices, ms, onboard);
+    _upsertThpRow(periode, 'ar', [
+      periode, 'ar', CONFIG.AR_OFFICER_NAME,
+      CONFIG.AR_BASE + CONFIG.AR_TUNJANGAN_OPS + a.komisi, CONFIG.AR_BASE,
+      CONFIG.AR_TUNJANGAN_OPS, a.komisi, '', a.collectedTotal, '', stamp
+    ]);
+  }
+  Logger.log('Re-stamp ' + periode + ': sales collected ' + rupiah(s.collected) +
+             ' · komisi ' + rupiah(s.commission) + ' · THP ' + rupiah(s.thp) +
+             (a ? ' | AR kas ' + rupiah(a.collectedTotal) + ' · komisi ' + rupiah(a.komisi) : ''));
+  return periode;
+}
+
+// Called from fullSync's master block, BEFORE recordThpHistory. No-op outside the grace
+// window (i.e. most of the month), so the normal daily sync does no extra work.
+function restampPreviousMonth(invoices, today) {
+  const grace = CONFIG.THP_RESTAMP_DAYS || 7;
+  if (today.getDate() > grace) return null;
+  return restampMonth(invoices, new Date(today.getFullYear(), today.getMonth() - 1, 1), today);
+}
+
+// Menu: force a re-stamp of last month even after the grace window (one-off correction).
+function restampPreviousMonthNow() {
+  const today = stripTime(new Date());
+  const invoices = _invoicesForRestamp(today);
+  const p = restampMonth(invoices, new Date(today.getFullYear(), today.getMonth() - 1, 1), today);
+  writeThpHistoryTab(invoices, 'master');
+  SpreadsheetApp.getUi().alert('Riwayat THP ' + _periodeLabel(p) + ' sudah dihitung ulang dari data Accurate terkini.\n\n' +
+    'Buka tab ' + CONFIG.TABS.THP_HISTORY + ' untuk lihat hasilnya. File Deden ikut terbarui di sync berikutnya.');
+}
+
+// Standalone invoice+receipt load for the manual menu path (fullSync already has these).
+// Only the passes the payroll math needs — no contacts/tier/faktur work.
+function _invoicesForRestamp(today) {
+  const onboard = _onboardDate();
+  const invoices = fetchSalesInvoices();
+  enrichReceipts(invoices, onboard, today);                       // attaches .receipts + bucketLock
+  invoices.forEach(function(i) { i.pool = classifyPool(i, onboard, today); });
+  return invoices;
+}
+
 // Read the ledger back, split by role, sorted ascending by periode.
 function _readThpHistory() {
   const sh = _thpHistorySheet();
@@ -247,10 +337,11 @@ function writeThpHistoryTab(invoices, role) {
 
   uiFootnote(sh, r, SPAN,
     '⚙️ Arsip otomatis tiap sync (jam 5 pagi) dari data Accurate — jangan edit manual. Kolom "Diperbarui" = ' +
-    'kapan baris itu terakhir di-refresh; bulan berjalan ikut tiap sync, bulan lalu beku di sync terakhir bulan itu. ' +
-    '"Invoice Terbit" dihitung ulang tiap sync dari tanggal faktur, jadi bulan lama pun ikut terisi. ' +
-    'Untuk mengunci angka final bulan ini secara presisi, jalankan "Run Full Sync now" di malam terakhir bulan ' +
-    '(koleksi hari terakhir setelah jam 5 pagi belum tertangkap di sync rutin). Tren = THP per bulan (muncul setelah ≥2 bulan).');
+    'kapan baris itu terakhir di-refresh. Bulan berjalan ikut tiap sync. Bulan lalu masih dihitung ULANG tiap sync ' +
+    'selama ' + (CONFIG.THP_RESTAMP_DAYS || 7) + ' hari pertama bulan baru — supaya bukti transfer yang baru dientri ke Accurate tapi bertanggal ' +
+    'bulan lalu tetap ikut terhitung; lewat itu baris tersebut beku permanen. Perlu koreksi setelahnya? Menu ROSH Accurate ▸ ' +
+    '"Hitung ulang Riwayat THP bulan lalu". "Invoice Terbit" dihitung ulang tiap sync dari tanggal faktur, jadi bulan lama pun ikut terisi. ' +
+    'Tren = THP per bulan (muncul setelah ≥2 bulan).');
 
   sh.setColumnWidth(1, 140);   // Periode (e.g. "September 2026")
   sh.setColumnWidth(2, 110);

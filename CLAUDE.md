@@ -300,6 +300,9 @@ File ids live in Script Properties `ADE_SHEET_ID` / `DEDEN_SHEET_ID`.
   Ade edits in her file, master picks them up next sync (reconciles per run, not real-time).
 - **Salary isolation:** `writeThpAdeTab`/`writeThpSalesTab` only run for their own file; `writeSummaryTab(ctx, role)`
   hides the other role's THP block (`'ade'` skips THP Sales, `'deden'` skips THP AR).
+  `writeThpSalesTab(k, role)` — `role='deden'` mengganti keterangan baris **Komisi 1.25%** (D17) jadi rumus
+  pendek `(Basis − Rp100.000.000) × 1,25%, hanya kelebihannya` + satu footnote contoh angka (Rp120jt → Rp250.000)
+  di bawah tab, karena D17 cuma 280px. Paragraf aturan pre-handover tetap master-only.
 - **🔴 lock is warning-only** (avoids the userinfo.email scope error) — Ade *can* override a 🔴 cell
   past a popup, but the next sync overwrites it.
 

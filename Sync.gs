@@ -198,7 +198,7 @@ function fullSync() {
       try {
         writeCollectedTab(buildCollectedMonths(invoices, CONFIG.SALES_NAME, today));
       } catch (e) { Logger.log('Faktur Collected dilewati: ' + e.message); }
-      writeThpSalesTab(sales);
+      writeThpSalesTab(sales, 'deden');      // keterangan komisi dikosongkan di file dia
       writeThpHistoryTab(invoices, 'deden'); // 📈 Riwayat THP — SALES section only (no Ade)
       orderTabs();                           // safe here: positions count only existing tabs
       _dropDefaultSheet();

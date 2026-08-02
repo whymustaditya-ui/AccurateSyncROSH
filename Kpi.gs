@@ -152,7 +152,9 @@ function diskonTier(ratio) {
 
 // Styled to mirror writeThpAdeTab (KPI Matriks AR): banner → green THP headline →
 // Komponen KPI section → Skor Total band → Take-Home Pay section → footnote.
-function writeThpSalesTab(k) {
+// `role` = 'deden' saat menulis ke file Deden: kolom keterangan baris Komisi
+// dikosongkan (dia cuma mau lihat angka + basisnya, tanpa paragraf aturan).
+function writeThpSalesTab(k, role) {
   const sh = uiSheet(CONFIG.TABS.THP_SALES);
   const SPAN = 4;
   const pct = function(x) { return x == null ? '—' : (x * 100).toFixed(0) + '%'; };
@@ -198,14 +200,26 @@ function writeThpSalesTab(k) {
       'Skor × ' + rupiah(CONFIG.SALES_TUNJANGAN_MULT) + ' (cap 106% = ' + rupiah(capTunjangan) + ')');
   r = _arRow(sh, r, 'Komisi 1.25%', rupiah(k.commission),
       (k.preHandoverRule ? 'Basis ' + rupiah(k.commissionBase) : ''),
-      (k.preHandoverRule
+      (role === 'deden'
+        ? '(Basis − ' + rupiah(CONFIG.SALES_COMMISSION_FLOOR) + ') × 1,25%, hanya kelebihannya'
+        : (k.preHandoverRule
         ? 'Atas kas yang cair SEBELUM H+15, di atas ' + rupiah(CONFIG.SALES_COMMISSION_FLOOR) +
           '. Kas yang ditagih ' + CONFIG.AR_OFFICER_NAME + ' (' + rupiah(k.collectedPostHandover) +
           ') tetap masuk omzet, tapi tidak masuk komisi.'
-        : 'Atas collected di atas ' + rupiah(CONFIG.SALES_COMMISSION_FLOOR)));
+        : 'Atas collected di atas ' + rupiah(CONFIG.SALES_COMMISSION_FLOOR))));
   r = _arRow(sh, r, 'THP — TOTAL', rupiah(k.thp), 'Floor ' + rupiah(k.base), 'Take-home pay bulan ini');
   sh.getRange(r - 1, 1, 1, SPAN).setBackground(UI.GREEN_SOFT).setFontColor(UI.GREEN).setFontWeight('bold');
   r += 1;
+
+  // File Deden dapat satu paragraf contoh perhitungan komisi — D17 terlalu sempit untuk
+  // memuatnya, jadi rumus pendek di sana + contoh angka di sini (usulan Bro 2026-08-02).
+  if (role === 'deden') {
+    const floorTxt = rupiah(CONFIG.SALES_COMMISSION_FLOOR);
+    r = uiFootnote(sh, r, SPAN,
+      '💡 Komisi 1,25% dihitung dari KELEBIHAN basis di atas ' + floorTxt + ', bukan dari seluruh collected. ' +
+      'Contoh: basis Rp120.000.000, komisi = (Rp120.000.000 − ' + floorTxt + ') × 1,25% = Rp250.000, ' +
+      'bukan Rp1.500.000. Basis di bawah ' + floorTxt + ', komisi Rp0.');
+  }
 
   uiFootnote(sh, r, SPAN,
     '⚙️ Semua angka dihitung ulang tiap sync (jam 5 pagi) dari data Accurate — jangan edit manual. ' +

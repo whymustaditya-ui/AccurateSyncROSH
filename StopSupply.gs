@@ -1,13 +1,15 @@
 /**
  * ROSH × Accurate — ⛔ Stop Supply (HOLD Order).
  *
- * Leverage utama flow penagihan: begitu customer punya invoice belum bayar ≥ H+7
- * (CONFIG.STOP_SUPPLY_DAYS), dia masuk daftar HOLD → Nathan tidak proses SO baru sampai
- * lunas. Untuk pelanggan repeat-order ini menekan jauh lebih efektif daripada reminder ke-10.
+ * Leverage utama flow penagihan: begitu customer punya invoice belum bayar yang sudah lewat
+ * jatuh tempo (≥ H+CONFIG.STOP_SUPPLY_DAYS, kini 1 hari), dia masuk daftar HOLD → Nathan tidak
+ * proses SO baru sampai lunas. Untuk pelanggan repeat-order ini menekan jauh lebih efektif
+ * daripada reminder ke-10.
  *
  * Pure projection of Pass-1 invoices (no Accurate call, no write — OAuth read-only; hold-nya
- * dilakukan manual di Accurate). Master-only. Depends on Sync.gs (fields, _ss, fmtDate, DAY_MS)
- * + Style.gs (UI helpers) + Kpi.gs (rupiah).
+ * dilakukan manual di Accurate). Ditulis di master (semua customer) DAN di file Deden
+ * (di-scope ke faktur atas nama dia via _bySalesman — lihat blok Deden di fullSync).
+ * Depends on Sync.gs (fields, _ss, fmtDate, DAY_MS) + Style.gs (UI helpers) + Kpi.gs (rupiah).
  */
 
 var STOPSUP_HEADERS = [
@@ -18,7 +20,8 @@ var STOPSUP_HROW = 3;  // header row (banner=1, subtitle=2)
 var STOPSUP_DROW = 4;  // first data row
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BUILDER — customer-level: punya ≥1 invoice belum bayar yang sudah ≥ H+7.
+// BUILDER — customer-level: punya ≥1 invoice belum bayar yang sudah lewat jatuh tempo.
+// `invoices` boleh sudah di-scope ke satu salesman (file Deden) — builder tak peduli.
 // ─────────────────────────────────────────────────────────────────────────────
 function buildStopSupply(invoices, today) {
   const byCust = {};
@@ -47,14 +50,19 @@ function buildStopSupply(invoices, today) {
 // ─────────────────────────────────────────────────────────────────────────────
 // WRITER — tab ⛔ Stop Supply (HOLD). Semua 🔴 generated.
 // ─────────────────────────────────────────────────────────────────────────────
-function writeStopSupplyTab(list) {
+function writeStopSupplyTab(list, role) {
   const sh = uiSheet(CONFIG.TABS.STOP_SUPPLY);
   const SPAN = STOPSUP_SPAN;
 
+  const isDeden = (role === 'deden');
   uiBanner(sh, 1, SPAN,
-    '⛔ Stop Supply — HOLD Order Baru',
-    'Customer dengan invoice belum bayar ≥ H+' + CONFIG.STOP_SUPPLY_DAYS + ' (lewat jatuh tempo). ' +
-    'Nathan: JANGAN proses SO / order baru untuk customer di daftar ini sampai lunas. ' +
+    isDeden ? '⛔ Customer Ditahan — Order Baru di-HOLD' : '⛔ Stop Supply — HOLD Order Baru',
+    'Customer dengan invoice belum bayar yang sudah lewat jatuh tempo (≥ H+' +
+    CONFIG.STOP_SUPPLY_DAYS + '). ' +
+    (isDeden
+      ? 'Ini customer ATAS NAMA KAMU saja. Order baru mereka ditahan sampai tagihan lunas — ' +
+        'kejar pelunasannya kalau mau order mereka jalan lagi. Tampilan saja, tidak perlu diisi.'
+      : 'Nathan: JANGAN proses SO / order baru untuk customer di daftar ini sampai lunas.') + ' ' +
     'Otomatis dibuat ulang tiap jam 5 pagi.',
     UI.RED, UI.RED_SOFT);
 
@@ -63,7 +71,7 @@ function writeStopSupplyTab(list) {
 
   if (!list.length) {
     sh.getRange(STOPSUP_DROW, 1, 1, SPAN).merge()
-      .setValue('✅ Tidak ada customer yang perlu di-HOLD (tak ada invoice ≥ H+' + CONFIG.STOP_SUPPLY_DAYS + ').')
+      .setValue('✅ Tidak ada customer yang perlu di-HOLD (tak ada invoice lewat jatuh tempo).')
       .setFontColor(UI.NOTE).setFontStyle('italic').setVerticalAlignment('middle');
     sh.setColumnWidth(1, 220);
     return sh;
@@ -101,8 +109,12 @@ function writeStopSupplyTab(list) {
   ]);
 
   uiFootnote(sh, totRow + 1, SPAN,
-    '◆ Cara pakai: customer di sini punya minimal 1 invoice yang sudah lewat ≥ H+' + CONFIG.STOP_SUPPLY_DAYS +
-    '. Nathan tahan order baru sampai lunas — keluar dari daftar otomatis begitu semua invoice-nya di bawah ambang/lunas. ' +
+    '◆ Cara pakai: customer di sini punya minimal 1 invoice yang sudah lewat jatuh tempo (≥ H+' +
+    CONFIG.STOP_SUPPLY_DAYS + '). ' +
+    (isDeden
+      ? 'Daftar ini sudah disaring ke faktur atas nama kamu; Total Outstanding = seluruh faktur kamu yang belum lunas di customer itu. '
+      : 'Nathan tahan order baru sampai lunas — ') +
+    'Keluar dari daftar otomatis begitu semua invoice-nya lunas. ' +
     'Umur Tertua = hari lewat jatuh tempo invoice paling lama.');
 
   sh.setColumnWidth(1, 220); sh.setColumnWidth(2, 130); sh.setColumnWidth(3, 130);

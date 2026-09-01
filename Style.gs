@@ -110,7 +110,7 @@ function writeCaraBacaTab() {
         [CONFIG.TABS.SUMMARY, 'Ringkasan semua tab + kesehatan bisnis (AR aging, DSO, collection, tren harian) dalam satu layar', 'Pantau strategis'],
         [CONFIG.TABS.TODO, 'To-do harian: penagihan jatuh tempo (H-1→H+3) & follow-up customer pasif', 'Aksi hari ini'],
         [CONFIG.TABS.PESAN, 'Pesan WA penagihan siap kirim, 1 pesan/pelanggan (gabung faktur H-1→H+14)', 'Copy / tap Kirim WA'],
-        [CONFIG.TABS.STOP_SUPPLY, 'Customer ≥H+7 belum bayar — Nathan tahan order baru sampai lunas', 'HOLD order'],
+        [CONFIG.TABS.STOP_SUPPLY, 'Customer lewat jatuh tempo belum bayar — Nathan tahan order baru sampai lunas', 'HOLD order'],
         [CONFIG.TABS.POOL_A, 'Stuck AR — backlog lama, frozen per hari onboard', 'Burn-down ke Rp0'],
         [CONFIG.TABS.POOL_B, 'Ongoing AR — invoice baru yang lewat ke ' + me + ' (H+15)', 'Terus bertambah'],
         [CONFIG.TABS.RUTE, 'Daftar jalan penagihan: piutang terbuka per zona, diurut prioritas + rute terdekat', 'Isi Zona & Pin Maps'],

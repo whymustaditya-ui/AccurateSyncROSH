@@ -118,7 +118,7 @@ const CONFIG = {
   },
 
   // ── Flow Penagihan Fase 0 (StopSupply.gs / Route.gs dispatch / Pesan.gs batch) ──
-  STOP_SUPPLY_DAYS:    7,   // invoice belum bayar ≥ H+7 → customer flag HOLD (Nathan tahan SO baru)
+  STOP_SUPPLY_DAYS:    1,   // invoice belum bayar ≥ H+1 (lewat jatuh tempo) → customer flag HOLD (Nathan tahan SO baru)
   PENAGIHAN_WINDOW_MAX: 14, // tab Pesan cakup faktur daysPastDue ∈ [-1,14] (window Deden pra-handover)
   // Aturan dispatch kunjungan (dari diagram flow). Prioritas: Solo > Nearest > Rute > Antri.
   DISPATCH: {
@@ -165,7 +165,7 @@ const CONFIG = {
     CARA_BACA:     '📖 Cara Baca',          // onboarding guide (static, rebuilt each sync)
     TODO:          '📌 To-Do — Peringatan', // daily action list: penagihan JT (H-1→H+14, 4-touch) + follow-up reaktivasi (dormancy)
     PESAN:         '✉️ Pesan Penagihan',     // ready-to-send WA collection messages, group-by-customer (Pesan.gs, master-only)
-    STOP_SUPPLY:   '⛔ Stop Supply (HOLD)',   // customer ≥H+7 belum bayar → Nathan tahan SO baru (StopSupply.gs, master-only)
+    STOP_SUPPLY:   '⛔ Stop Supply (HOLD)',   // customer lewat jatuh tempo belum bayar → Nathan tahan SO baru (StopSupply.gs; master + file Deden discoped)
     KONTAK:        '📇 Kontak Customer',      // directory semua customer: nama + No WA + No Bisnis (Kontak.gs, master-only)
     POOL_A:        '🔴 Pool A — Stuck AR',   // FROZEN legacy AR (handover ≤ onboard, unpaid at onboard)
     POOL_B:        '🔵 Pool B — Ongoing AR', // ongoing AR (handover > onboard)
@@ -214,6 +214,7 @@ TABS_DEDEN[CONFIG.TABS.INVOICE_SALES] = '🧾 Tagihan Kamu';         // yang mas
 TABS_DEDEN[CONFIG.TABS.POOL_B]        = '🔵 Faktur Ongoing AR';    // sudah lewat H+14, ditangani Ade, dia pantau
 TABS_DEDEN[CONFIG.TABS.THP_SALES]     = '📊 KPI & Gaji Bulan Ini';
 TABS_DEDEN[CONFIG.TABS.THP_HISTORY]   = '📈 Riwayat Gaji';
+TABS_DEDEN[CONFIG.TABS.STOP_SUPPLY]   = '⛔ Customer Ditahan';       // customer kamu yang order barunya di-HOLD
 // CONFIG.TABS.COLLECTED sengaja TIDAK di-alias — '💰 Faktur Collected' dipakai apa adanya.
 
 // Migrasi nama yang sempat dipakai lalu diganti. _applyTabAlias me-rename tab lama ini di

@@ -23,7 +23,7 @@ the versioned copies.
 | `Health.gs` | Business Health (master-only): AR aging waterfall, DSO, collected-vs-billed MTD, top debtors + **daily trend snapshots** (hidden `_MetricSnapshots`, upsert-by-date) driving SPARKLINE trends. `computeBusinessHealth`/`recordMetricSnapshot`/`writeHealthSections`. **Folded into the `📋 Ringkasan` tab (no separate tab since 2026-06-05)** — `writeHealthSections(sh,row,m,span)` appends RINGKAS/AGING/TREN/TOP DEBITUR below the Summary, master only. Pure projection of the enriched `invoices`+`ctx` — zero new Accurate calls/scope |
 | `Route.gs` | Rute Penagihan: aggregate Ade's open AR by customer, zona grouping (`Zona (auto)` from address-text regex `_zonaFromAddress`, geocode fallback + Ade override), zona priority (Σ Rp × umur), nearest-neighbour stop ordering from Maps pins / geocoded coords, `Tier (4bln)` + `Tipe Dispatch` (`_dispatchType`: Solo/Nearest/Rute/Antri) cols, `🗺️ Rute Penagihan` writer. Built-in Maps geocoder + `_PinCache`/`_GeoCache` |
 | `Pesan.gs` | Pesan Penagihan: ready-to-send WA messages **group-by-customer** (1 pesan gabung faktur window H-1→H+14) via `buildPenagihanBatch`. `_waPhone` normalize, `_penagihanMessageBatch` (tone semi-formal per bucket H-1/H+3/H+7/H+14, direvisi 2026-07-28 pasca komplain partner + tier A/B soften + bank instr + CTA bukti transfer), `_waLinkFormula` (wa.me prefill), `✉️ Pesan Penagihan` writer. Master-only |
-| `StopSupply.gs` | ⛔ Stop Supply (HOLD): `buildStopSupply` (customer dengan invoice ≥H+7 belum bayar), `writeStopSupplyTab`. Flag-only — Nathan tahan SO baru manual di Accurate (OAuth read-only). Master-only |
+| `StopSupply.gs` | ⛔ Stop Supply (HOLD): `buildStopSupply` (customer dengan invoice belum bayar yang sudah lewat jatuh tempo, ambang `CONFIG.STOP_SUPPLY_DAYS` **1** sejak 2026-09-01, dulu 7), `writeStopSupplyTab(list, role)`. Flag-only — Nathan tahan SO baru manual di Accurate (OAuth read-only). Ditulis di **master** (semua customer) **dan file Deden** (input di-scope `_bySalesman` dulu → agregat per customer cuma outstanding dia; alias tab `⛔ Customer Ditahan`, banner/footnote versi sales) |
 | `Kontak.gs` | 📇 Kontak Customer (master-only): directory SEMUA customer master — `Nama Customer \| No WA \| No Bisnis`. `harvestAllCustomerContacts` = page `customer/list.do` (id saja) → `customer/detail.do` per id TIME-BUDGETED (3 min / 300 per run, drain bertahap) → simpan ke `_ContactCache` 7-kolom; `writeKontakTab` murni baca cache (nol API); `refreshKontakNow` = menu manual drain. No WA = `_custWa` — **CONFIRMED via diag 2026-07-06: field API "No. WhatsApp" = `bbmPin`** (legacy BBM Pin di-recycle; `mobilePhone` = Handphone, sering null) → kandidat lain + regex-scan camel→snake sebagai jaga-jaga → fallback Handphone. No Bisnis = `_custBiz` (`workPhone\|phone\|fax`; UI "No. Telp. Bisnis" = `workPhone`). Verify via `diagKontakFields()` (dump key phone-like + hasil mapping); habis ganti mapping jalankan `rebuildKontakCacheNow` (wipe cache — entry ber-`nama` di-skip harvest, wipe = satu-satunya jalan refill `noWa`). Scope `customer_view` (sudah ada) |
 | `Restock.gs` | 📦 Restock Engine (master-only) **v2**: SKU tier **percentile self-calibrating** (velocity 60% + penetration 40% → A/B/C/D) → reorder point **statistik** (demand recency-weighted EWMA + safety `Z[tier]×σ_LT`, lead-time per item) → order-up-to `ROP + d×cycle[tier]` → **inventory position = stok + on-order PO** → **cash-capped PO** (rank Revenue-at-Risk ÷ harga beli, `PO_BUDGET`). Hidden caches: `_ItemCache` (`refreshItemMaster` ← `item/list.do`: `availableToSell`/`vendorPrice`/`deliveryLeadTime`, scope **`item_view`**, skip `suspended`) + `_SkuSalesCache` (`harvestSkuSales` ← per-invoice `sales-invoice/detail.do`, time-budgeted, prune>window). On-order: `buildOnOrderByItem` ← `purchase-order/list+detail.do` (scope **`purchase_order_view`**, no cache). Budget `PO_BUDGET` manual atau auto `PO_BUDGET_PCT`×saldo Bank Jago (`pullBankBalance` ← `glaccount/list.do`, scope **`gl_account_view`**). Demand v3 winsorized+growth. `_demandStats`/`_percentileScore`/`computeRestock`/`writeRestockTab`/`diag{Item,Purchase,CashBank}Fields`. Const `CONFIG.RESTOCK` |
 | `Faktur.gs` | Faktur Penjualan PDF: `buildFakturHtml`→HTML→PDF, Drive cache, `terbilang`, `fakturLinkFormula` = **DIRECT Drive `/view` link if cached, else blank** (generation is server-side: `generateFakturPdfs`/`catchUpFakturPdfs`/daily trigger). `doGet` web app kept for owner/diag only — **generate-on-click via /exec is a dead end in multi-account browsers**, see Faktur section. setup/diag |
@@ -107,9 +107,9 @@ line-item field names first with `diagFakturFields(<invoiceId>)`. Generated PDFs
 
 Fase 0 dari roadmap migrasi WhatsApp BSP/Mekari Qontak (proposal v3): **buktikan flow penagihan
 jalan manual di sheet dulu sebelum bayar Qontak.** Pure projection — no API, no new scope.
-Stages flow (relatif `daysPastDue`): H-1 reminder · Tahap 1 Deden H+3 · **H+7 STOP-SUPPLY** ·
+Stages flow (relatif `daysPastDue`): H-1 reminder · Tahap 1 Deden H+3 · **STOP-SUPPLY begitu lewat jatuh tempo** ·
 Tahap 2 Deden H+8–14 · handover Ade >H+14 (`handoverDate=dueDate+15`, **sudah cocok**) · Tahap 3
-Ade weekly + antrian kunjungan. Thresholds di `CONFIG` (`STOP_SUPPLY_DAYS 7`, `PENAGIHAN_WINDOW_MAX 14`,
+Ade weekly + antrian kunjungan. Thresholds di `CONFIG` (`STOP_SUPPLY_DAYS 1`, `PENAGIHAN_WINDOW_MAX 14`,
 `DISPATCH.{SOLO_MIN 2.5jt, ZONE_MIN_STOPS 3, QUEUE_AGE_DAYS 21}`). Tiga deliverable, semua master-only:
 
 ### ✉️ Pesan Penagihan (`Pesan.gs`) — group-by-customer
@@ -131,7 +131,9 @@ tab ⛔ Stop Supply (HOLD) + hold manual Nathan. Semua copy customer-facing ada 
 
 ### ⛔ Stop Supply (HOLD) (`StopSupply.gs`)
 Tab **`⛔ Stop Supply (HOLD)`**. `buildStopSupply` = customer yang punya ≥1 invoice belum bayar
-**≥ H+7**. Flag-only — **Nathan tahan SO/order baru manual di Accurate** (OAuth read-only, sheet tak bisa
+yang **sudah lewat jatuh tempo** (`CONFIG.STOP_SUPPLY_DAYS`, diturunkan 7 → **1** pada 2026-09-01 atas
+permintaan Bro). Agregat per customer: begitu satu faktur lewat JT, SELURUH outstanding customer itu
+ikut terhitung di kolom Total. Flag-only — **Nathan tahan SO/order baru manual di Accurate** (OAuth read-only, sheet tak bisa
 tulis hold). Leverage utama flow. Kolom: Customer · Telp · Sales · Jml Invoice · Total · Umur Tertua · Tier.
 
 ### 🗺️ Rute Penagihan +Tipe Dispatch (`Route.gs`)
@@ -283,7 +285,7 @@ master, aman dipanggil di file role mana pun.
 **Nama tab versi Deden (2026-08-02):** `CONFIG.TABS` ditulis dari sudut pandang operator AR (`Pool B — Ongoing AR`,
 `KPI Matriks Sales`, `Riwayat THP`) — buat Deden itu jargon. Peta **`TABS_DEDEN`** (Code.gs, key = nama master)
 memberi file dia nama sendiri: `🧾 Tagihan Kamu` · `🔵 Faktur Ongoing AR` · `📊 KPI & Gaji Bulan Ini` ·
-`📈 Riwayat Gaji` (`💰 Faktur Collected` sengaja tidak di-alias). Mekanismenya global `TAB_ALIAS` + `_tabName()` (Sync.gs) yang dipasang di **tiga chokepoint saja**
+`📈 Riwayat Gaji` · `⛔ Customer Ditahan` (`💰 Faktur Collected` sengaja tidak di-alias). Mekanismenya global `TAB_ALIAS` + `_tabName()` (Sync.gs) yang dipasang di **tiga chokepoint saja**
 — `uiSheet` (Style.gs), `_tab` (Sync.gs), `writePoolTab` — plus `orderTabs`, jadi **nol writer diubah** dan
 master/Ade tetap pakai nama asli (dokumentasi + `collectPoolYellow` + kebiasaan Ade aman). `_applyTabAlias(ss, map)`
 dipanggil di AWAL blok Deden untuk **rename tab lama di tempat** (kalau tidak, writer bikin tab baru dan yang lama

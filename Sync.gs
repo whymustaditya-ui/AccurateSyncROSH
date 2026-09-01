@@ -91,7 +91,7 @@ function fullSync() {
     const dueReminders = buildDueReminders(invoices, today);    // penagihan JT (H-1 → H+14, 4-touch)
     const followUps    = buildFollowUpReminders(invoices, today); // reaktivasi (dormancy)
     const penagihanBatch = buildPenagihanBatch(invoices, today);  // pesan WA group-by-customer (H-1 → H+14)
-    const stopSupply     = buildStopSupply(invoices, today);      // customer ≥H+7 → HOLD order baru
+    const stopSupply     = buildStopSupply(invoices, today);      // customer lewat jatuh tempo → HOLD order baru
     const sales        = computeSalesKpi(invoices);
     const ar           = computeArKpi(invoices, onboard, today);
 
@@ -131,7 +131,7 @@ function fullSync() {
     writeCaraBacaTab();                       // 📖 onboarding guide (static, rebuilt each sync)
     writeTodoTab(dueReminders, followUps);    // 📌 daily action list
     writePesanTab(penagihanBatch);            // ✉️ pesan WA siap kirim, group-by-customer (master-only)
-    writeStopSupplyTab(stopSupply);           // ⛔ daftar HOLD order (≥H+7) untuk Nathan (master-only)
+    writeStopSupplyTab(stopSupply, 'master'); // ⛔ daftar HOLD order (lewat jatuh tempo) untuk Nathan
     // 📇 Kontak Customer (master-only) — directory semua customer (nama/WA/telp bisnis).
     // FAIL-SOFT: harvest time-budgeted (drain bertahap); gagal harvest ≠ gagal sync.
     try {
@@ -193,6 +193,13 @@ function fullSync() {
         'Customer kamu yang tagihannya sudah lewat H+14 dan pindah ke ' + CONFIG.AR_OFFICER_NAME +
         '. Penagihan jadi tugas ' + CONFIG.AR_OFFICER_NAME + '; tab ini untuk kamu pantau saja (lihat, tidak diisi).',
         true);                               // viewOnly — semua kolom read-only di file Deden
+      // ⛔ Stop Supply — versi Deden: SAMA persis dengan tab master tapi input invoice-nya
+      // di-scope ke faktur atas nama dia dulu, jadi agregat per customer hanya menghitung
+      // outstanding miliknya (customer yang nunggak cuma di sales lain tidak muncul).
+      // FAIL-SOFT: tab tambahan tak boleh meng-abort sync file Deden.
+      try {
+        writeStopSupplyTab(buildStopSupply(_bySalesman(invoices, CONFIG.SALES_NAME), today), 'deden');
+      } catch (e) { Logger.log('Stop Supply (Deden) dilewati: ' + e.message); }
       // 💰 Faktur Collected — rincian faktur di balik angka Collected (bulan lalu + bulan ini).
       // FAIL-SOFT: tab tambahan tak boleh meng-abort sync file Deden (pola blok Restock/Kontak).
       try {

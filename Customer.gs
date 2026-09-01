@@ -296,7 +296,7 @@ function _custMarginStats(g, ctx) {
   const out = { ok: false, cakupan: 0, cakupanBiaya: 0, omzetTercakup: 0, lineRevenue: 0,
                 hpp: 0, diskon: 0, marginKotor: 0, marginKotorPct: null, biayaModal: 0,
                 marginBersih: 0, marginBersihPct: null, naikPct: 0, rugiRp: 0, rugiPct: 0,
-                costHist: 0, costSnap: 0, histPct: 0 };
+                costHist: 0, costSnap: 0, histPct: 0, sebab: '' };
   if (!ctx || !ctx.enabled) return out;
 
   let totWin = 0, totCovered = 0, costKnown = 0, costAll = 0;
@@ -377,6 +377,21 @@ function _custMarginStats(g, ctx) {
   }
   out.ok = (out.cakupan >= C.MIN_COVERAGE && out.cakupanBiaya >= C.MIN_COST_COVERAGE &&
             out.omzetTercakup >= C.MIN_OMZET_RP && out.lineRevenue > 0);
+  // Sebab SPESIFIK kenapa margin tidak bisa dihitung. Sebelumnya alasannya selalu berbunyi
+  // "cakupan sekian persen" walau cakupannya 100%, dan itu membingungkan: penyebab tersering
+  // sebenarnya omzet di bawah lantai, bukan data yang kurang.
+  if (!out.ok) {
+    if (totWin <= 0) {
+      out.sebab = 'tidak ada pembelian dalam ' + C.MARGIN_WINDOW_MONTHS + ' bulan terakhir';
+    } else if (out.lineRevenue <= 0 || out.cakupan < C.MIN_COVERAGE) {
+      out.sebab = 'rincian barangnya baru ' + Math.round(out.cakupan * 100) + '% ketarik dari Accurate';
+    } else if (out.cakupanBiaya < C.MIN_COST_COVERAGE) {
+      out.sebab = 'harga beli baru menutup ' + Math.round(out.cakupanBiaya * 100) + '% omzetnya';
+    } else {
+      out.sebab = 'belanjanya cuma ' + rupiah(out.omzetTercakup) + ' dalam ' +
+                  C.MARGIN_WINDOW_MONTHS + ' bulan, di bawah ambang ' + rupiah(C.MIN_OMZET_RP);
+    }
+  }
 
   // Kenaikan harga yang membuat customer ini sehat. Skip adalah langkah KEDUA, bukan pertama:
   // melepas volume juga melepas kontribusi ke biaya tetap dan daya tawar ke pabrik.
@@ -457,8 +472,8 @@ function _custVerdict(p, m, sc, arBook) {
              '. Boleh jalan tapi jangan lewat Saran Limit, dan pakai tempo ' + tempo + ' hari.';
   }
   if (!m.ok && CONFIG.CUSTOMER.MARGIN_ENABLED) {
-    alasan += ' Data margin belum lengkap (cakupan ' + Math.round(m.cakupan * 100) +
-              '%), keputusan dari sisi bayar saja.';
+    alasan += ' Margin belum bisa dihitung karena ' + (m.sebab || 'data belum cukup') +
+              ', jadi keputusan ini murni dari sisi bayar.';
   }
   return { verdict: verdict, alasan: alasan, limit: limit, tempo: tempo, rank: true };
 }
@@ -988,7 +1003,8 @@ function _custCaraBaca(sh, row, SPAN) {
     ['Nunggak Sekarang', 'Sisa tagihan yang belum dibayar hari ini. Angka ini sama persis dengan TOP DEBITUR di tab Ringkasan.'],
     ['Telat Terlama', 'Faktur terbuka paling lama, dihitung dari jatuh tempo. Kalau lewat ' + CONFIG.CUSTOMER.STOP_DPD + ' hari, Keputusan langsung merah berapa pun skornya.'],
     ['Belanja / bln', 'Rata rata nilai faktur per bulan selama ' + CONFIG.CUSTOMER.LIMIT_WINDOW_MONTHS + ' bulan terakhir. Ini dasar hitungan Saran Limit.'],
-    ['Cakupan Data', 'Berapa persen faktur customer ini yang rincian barangnya sudah ketarik dari Accurate. Di bawah ' + Math.round(CONFIG.CUSTOMER.MIN_COVERAGE * 100) + '% berwarna kuning dan semua kolom margin ditulis belum bisa dihitung, karena menebak margin dari data separuh lebih berbahaya daripada tidak menampilkannya.'],
+    ['Cakupan Data', 'Berapa persen faktur customer ini yang rincian barangnya sudah ketarik dari Accurate. Di bawah ' + Math.round(CONFIG.CUSTOMER.MIN_COVERAGE * 100) + '% berwarna kuning, karena menebak margin dari data separuh lebih berbahaya daripada tidak menampilkannya.'],
+    ['Kenapa margin kosong', 'Kolom margin baru diisi kalau TIGA syarat terpenuhi: rincian barangnya sudah ketarik minimal ' + Math.round(CONFIG.CUSTOMER.MIN_COVERAGE * 100) + '%, harga belinya diketahui untuk minimal ' + Math.round(CONFIG.CUSTOMER.MIN_COST_COVERAGE * 100) + '% omzet, dan belanjanya minimal ' + rupiah(CONFIG.CUSTOMER.MIN_OMZET_RP) + ' dalam ' + CONFIG.CUSTOMER.MARGIN_WINDOW_MONTHS + ' bulan. Yang paling sering menahan adalah syarat ketiga: pembeli kecil tidak diberi angka margin karena satu pesanan aneh saja sudah bisa menjungkirkan persentasenya. Alasan persisnya untuk tiap customer ditulis di kolom Alasan. Customer yang tidak belanja sama sekali dalam ' + CONFIG.CUSTOMER.MARGIN_WINDOW_MONTHS + ' bulan memang tidak akan pernah punya angka margin, berapa pun ambangnya diturunkan.'],
     ['Margin Kotor', 'Nilai jual barang dikurangi harga beli, sudah dikurangi diskon faktur. Band normal ROSH ' + Math.round(CONFIG.CUSTOMER.MARGIN_BAND_LOW * 100) + ' sampai ' + Math.round(CONFIG.CUSTOMER.MARGIN_BAND_HIGH * 100) + ' persen; di bawah itu berarti harga kurang, jauh di atas itu biasanya untung sesaat atau harga beli yang sudah berubah. Harga beli dipakai yang tercatat saat faktur dipanen; untuk faktur lama yang belum sempat terekam, dipakai harga beli terakhir sehingga sifatnya indikatif, bukan angka pembukuan.'],
     ['Biaya Modal', 'Harga dari uang yang nongkrong di customer. Dihitung sejak faktur terbit sampai uang benar benar masuk, bukan cuma hari telatnya, karena tempo yang kita berikan juga ada biayanya. Tarif ' + Math.round(CONFIG.CUSTOMER.COST_OF_CAPITAL_ANNUAL * 100) + '% per tahun.'],
     ['Cek kewajaran', 'Angka Margin kotor buku di bagian RINGKAS harus mendekati Gross Profit Margin di laporan Accurate (menu Laporan, Rasio Keuangan Per Bulan). Itu pembanding dari luar sistem ini, jadi kalau keduanya berjauhan, yang salah kemungkinan besar harga beli di master barang, bukan cara customer membayar.'],

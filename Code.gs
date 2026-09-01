@@ -238,7 +238,12 @@ const CONFIG = {
     MARGIN_WINDOW_MONTHS: 6,     // di-clamp ke RESTOCK.WINDOW_MONTHS saat runtime (_pruneSkuSales)
     MIN_COVERAGE:         0.70,  // <ini → margin "belum bisa dihitung", vonis dari sisi bayar saja
     MIN_COST_COVERAGE:    0.85,  // share omzet baris yang punya harga beli ASLI (bukan imputasi)
-    MIN_OMZET_RP:         10000000,
+    // Lantai omzet sebelum margin layak dihitung. Diturunkan 10jt -> 5jt (2026-09-02): setelah
+    // bulan ber-basis-modal-buruk dibuang, window efektif tinggal ~5 bulan, jadi ambang 10jt
+    // menuntut belanja Rp2jt/bulan dan itu MENGUBUR mayoritas customer kecil ROSH di baris
+    // "belum bisa dihitung" padahal cakupan datanya 100%. 5jt (~Rp1jt/bulan) tetap menahan
+    // margin dari akun yang benar-benar remeh, tanpa mengosongkan separuh tabel.
+    MIN_OMZET_RP:         5000000,
     FALLBACK_COST_RATIO:  0.80,  // dipakai kalau _ItemCache kosong (scope item_view belum grant)
     // Band margin KOTOR normal ROSH menurut Bro (2026-09-02): 14-22%. Dipakai untuk menilai
     // kewajaran, bukan cuma sebagai hiasan: margin di bawah band = harga kurang, di atas band

@@ -711,6 +711,13 @@ function collectCustomerYellow(files) {
 // ─────────────────────────────────────────────────────────────────────────────
 function writeCustomerTab(report) {
   const sh = uiSheet(CONFIG.TABS.CUSTOMER);
+  // uiSheet memanggil clear(), dan clear() TIDAK melepas pembekuan baris/kolom. Tanpa pelepasan
+  // eksplisit ini, pembekuan dari versi tab sebelumnya tetap menempel selamanya walau kodenya
+  // sudah tidak memanggil setFrozen* lagi — persis yang terjadi 2026-09-02: 50 baris beku
+  // tertinggal, tab tak bisa di-scroll, Sheets mengeluh "window is too small". Pola pelepasan
+  // ini sudah dipakai Collected.gs, Route.gs, dan writePoolTab.
+  sh.setFrozenColumns(0);
+  sh.setFrozenRows(0);
   const SPAN = CUST_SPAN;
   const t = report.totals;
   const mc = t.marginCtx;

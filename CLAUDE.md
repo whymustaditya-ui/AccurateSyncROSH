@@ -317,6 +317,11 @@ Setup role sheets (Ade/Deden)** (or Run it) → it creates + shares both files �
 
 ## Conventions
 
+- **`uiSheet()`/`clear()` TIDAK melepas pembekuan baris & kolom.** Menghapus panggilan `setFrozen*` dari writer
+  TIDAK membatalkan pembekuan yang sudah tertulis di tab — ia menempel selamanya sampai dilepas eksplisit
+  (`setFrozenColumns(0)` + `setFrozenRows(0)` di awal writer, pola `Collected.gs`/`Route.gs`/`writePoolTab`).
+  Kena di Rapor Customer 2026-09-02: 50 baris beku tertinggal, tab tak bisa di-scroll.
+
 - **JANGAN `setFrozenColumns` di tab yang punya banner/pita section ter-merge selebar tab.** Sheets menolak
   ("can't freeze columns which contain only part of a merged cell") dan errornya melempar SETELAH baris ditulis,
   jadi tulisan terakhir tak ter-flush dan seksi bawah tampak kosong — gejalanya menyesatkan, kelihatan seperti

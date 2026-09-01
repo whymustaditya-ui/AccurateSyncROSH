@@ -172,8 +172,16 @@ function fullSync() {
       const rapor = buildCustomerReport(invoices, today, yCust);
       writeCustomerTab(rapor);
       try { writeTurunBukuTab(buildTurunBuku(rapor, health, today, yTurun)); }
-      catch (e) { Logger.log('Turun Buku dilewati: ' + e.message); }
-    } catch (e) { Logger.log('Rapor Customer dilewati: ' + e.message); }
+      catch (e) {
+        // Fail-soft TAPI jangan senyap: tab yang hilang tanpa jejak bikin orang mengira
+        // fiturnya tidak ada. Pesannya masuk ⚙️ Sync Log supaya kelihatan tanpa buka editor.
+        Logger.log('Turun Buku dilewati: ' + e.message);
+        try { _log('WARN', 'Turun Buku dilewati: ' + e.message); } catch (e2) {}
+      }
+    } catch (e) {
+      Logger.log('Rapor Customer dilewati: ' + e.message);
+      try { _log('WARN', 'Rapor Customer dilewati: ' + e.message); } catch (e2) {}
+    }
 
     writeSummaryTab(ctx, 'master', health);
     orderTabs();                             // arrange tabs L→R for the 3 audiences

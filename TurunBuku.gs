@@ -275,7 +275,8 @@ function writeTurunBukuTab(m) {
     ['Customer pegang tempo', m.tempoCount + ' customer', 'Angka inilah yang harus turun, bukan cuma rupiahnya'],
     ['NPL lewat ' + T.NPL_DAYS + ' hari', nplRp,
       (nplPct * 100).toFixed(1) + '% dari buku · tagihan seumur ini yang biasanya paling sulit cair'],
-    ['Cadangan risiko', m.cadangan, 'Perkiraan bagian buku yang berpotensi tidak tertagih']
+    ['Total Gagal Bayar (Potensi Besar)', m.cadangan,
+      'Perkiraan bagian buku yang berpotensi tidak tertagih, dihitung dari umur tunggakannya']
   ];
   pos.forEach(function(row) {
     _mblock(sh, r, 1, 3, row[0]).setFontWeight('bold');

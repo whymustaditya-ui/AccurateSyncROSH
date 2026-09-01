@@ -27,7 +27,7 @@ var CUST_HEADERS = [
   'Customer', 'Sales', 'Tier (4bln)', 'Keputusan', 'Skor Bayar', 'Risiko',
   'Rata2 Telat (hari)', 'Lewat H+15', 'Nunggak Sekarang', 'Telat Terlama (hari)',
   'Belanja / bln', 'Cakupan Data', 'Omzet Tercakup', 'Margin Kotor', 'Margin Kotor %',
-  'Biaya Modal', 'Margin Bersih', 'Margin Bersih %', 'Cadangan Risiko',
+  'Biaya Modal', 'Margin Bersih', 'Margin Bersih %', 'Potensi Gagal Bayar',
   'Saran Limit', 'Jatah Plafon', 'Saran Tempo (hari)', 'Saran Naik Harga', 'Alasan',
   'Limit Disetujui', 'Catatan Nathan'
 ];
@@ -512,9 +512,11 @@ function _readCreditBudget() {
 
 function _resolveCreditBudget(today, arBook) {
   const cell = _readCreditBudget();
-  if (cell && cell > 0) return { budget: cell, src: 'manual (ketik di sheet)' };
+  if (cell && cell > 0) return { budget: cell, src: 'manual (ketik di sheet)', manual: true };
   const prop = _props().getProperty(CONFIG.TURUN_BUKU.BUDGET_PROP);
-  if (prop && num(prop) > 0) return { budget: num(prop), src: 'Script Property ' + CONFIG.TURUN_BUKU.BUDGET_PROP };
+  if (prop && num(prop) > 0) {
+    return { budget: num(prop), src: 'Script Property ' + CONFIG.TURUN_BUKU.BUDGET_PROP, manual: true };
+  }
   if (typeof _glideTargetFor === 'function') {
     const t = _glideTargetFor(today, arBook);
     if (t && t > 0) return { budget: Math.round(t), src: 'target glide path bulan ini' };
@@ -650,7 +652,7 @@ function buildCustomerReport(invoices, today, yMap) {
     return vb - va;
   });
 
-  const totals = { arBook: arBook, budget: bud.budget, budgetSrc: bud.src,
+  const totals = { arBook: arBook, budget: bud.budget, budgetSrc: bud.src, budgetManual: !!bud.manual,
                    terpakai: alloc.terpakai, sisa: alloc.sisa,
                    priorBuku: priorBuku, marginCtx: marginCtx,
                    dinilai: list.filter(function(r) { return r.rank; }).length,
@@ -722,15 +724,20 @@ function writeCustomerTab(report) {
   // ── RINGKAS ──
   r = uiSection(sh, r, SPAN, 'RINGKAS PORTOFOLIO', UI.GREEN);
   const ringkas = [
-    ['Plafon kredit bulan ini (ketik →)', t.budget, 'Sumber: ' + t.budgetSrc +
-      '. Kosongkan untuk ikut target program otomatis.'],
+    // Cell ini HANYA menampung ketikan Bro. Nilai hasil fallback sengaja TIDAK ditulis balik:
+    // kalau ditulis, sync berikutnya membacanya sebagai ketikan manual dan angkanya jadi lengket
+    // di angka lama (ketahuan 2026-09-02: plafon terbaca "manual" padahal tak pernah diketik).
+    ['Plafon kredit bulan ini (ketik →)', t.budgetManual ? t.budget : '',
+      'Berlaku sekarang: ' + rupiah(t.budget) + ' · sumber ' + t.budgetSrc +
+      '. Ketik angka di sebelah kiri untuk menimpa; kosongkan untuk ikut target program otomatis.'],
     ['Terpakai oleh saran limit', t.terpakai, t.sisa >= 0
       ? 'Sisa ' + rupiah(t.sisa) : 'KELEBIHAN ' + rupiah(-t.sisa)],
     ['Piutang berjalan sekarang', t.arBook, 'Total outstanding seluruh customer'],
     ['Customer pegang tempo', t.tempoCount + ' customer', 'Ini angka yang harus turun, bukan cuma rupiahnya'],
     ['Customer dinilai', t.dinilai + ' dari ' + t.jumlah,
       'Sisanya tunai, dorman, atau belum cukup data'],
-    ['Cadangan risiko', t.cadangan, 'Perkiraan bagian piutang yang berpotensi tidak tertagih']
+    ['Total Gagal Bayar (Potensi Besar)', t.cadangan,
+      'Perkiraan bagian piutang yang berpotensi tidak tertagih, dihitung dari umur tunggakannya']
   ];
   ['🟢 GAS', '🟡 GAS TERBATAS', '🟠 NAIKKAN HARGA', '🔴 STOP-COD'].forEach(function(v) {
     const b = t.perVerdict[v];
@@ -973,7 +980,7 @@ function _custCaraBaca(sh, row, SPAN) {
     ['Biaya Modal', 'Harga dari uang yang nongkrong di customer. Dihitung sejak faktur terbit sampai uang benar benar masuk, bukan cuma hari telatnya, karena tempo yang kita berikan juga ada biayanya. Tarif ' + Math.round(CONFIG.CUSTOMER.COST_OF_CAPITAL_ANNUAL * 100) + '% per tahun.'],
     ['Cek kewajaran', 'Angka Margin kotor buku di bagian RINGKAS harus mendekati Gross Profit Margin di laporan Accurate (menu Laporan, Rasio Keuangan Per Bulan). Itu pembanding dari luar sistem ini, jadi kalau keduanya berjauhan, yang salah kemungkinan besar harga beli di master barang, bukan cara customer membayar.'],
     ['Margin Bersih', 'Margin Kotor dikurangi Biaya Modal. Inilah angka yang membongkar pola omzet besar margin tipis: kalau dia bayarnya lambat, biaya modal memakan habis marginnya dan kolom ini jadi merah walaupun omzetnya kelihatan mantap.'],
-    ['Cadangan Risiko', 'Perkiraan bagian tagihan yang berpotensi tidak tertagih, dihitung dari umur tunggakannya.'],
+    ['Potensi Gagal Bayar', 'Perkiraan bagian tagihan customer ini yang berpotensi tidak tertagih, dihitung dari umur tunggakannya: makin tua makin besar porsinya. Ini perkiraan risiko ke depan, bukan kerugian yang sudah terjadi.'],
     ['Saran Limit', 'Belanja per bulan dikali panjang tempo dibagi 30, dikali kelonggaran sesuai risiko. Artinya cukup untuk satu siklus tempo penuh plus cadangan. Dibatasi maksimal ' + Math.round(CONFIG.CUSTOMER.CONC_PCT * 100) + '% dari total piutang ROSH supaya tidak ada satu customer pun yang bisa menjatuhkan kita sendirian.'],
     ['Jatah Plafon', 'Saran Limit setelah dibagi rata dari plafon kredit bulan ini. Kalau plafon tidak cukup untuk semua, yang memberi nilai terbesar per rupiah kredit dapat duluan, sisanya kebagian nol dan sementara dilayani COD.'],
     ['Saran Tempo', 'Tempo yang disarankan. Mesin hanya boleh MEMPERPENDEK tempo, tidak pernah memperpanjang sendiri. Melonggarkan tempo tetap keputusan orang.'],

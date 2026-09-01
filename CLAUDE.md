@@ -317,6 +317,13 @@ Setup role sheets (Ade/Deden)** (or Run it) → it creates + shares both files �
 
 ## Conventions
 
+- **Lebar range `setValues` HARUS sama dengan panjang array baris.** Ini meng-ABORT `fullSync` di tengah,
+  bukan sekadar merusak tampilan, dan semua writer setelahnya ikut tidak jalan. Pernah kejadian: `writeRestockTab`
+  memakai `SPAN` (19, lebar tab untuk banner/merge seksi DAFTAR BELANJA) sebagai lebar tabel DAFTAR SKU yang
+  header-nya cuma 17 → "data has 17 but the range has 19", laten sejak 2026-06-30 dan baru meledak begitu
+  Restock benar-benar punya baris. Kalau satu seksi lebih sempit dari tab, pakai konstanta lebar tabelnya
+  sendiri (`SKU_COLS = headers.length`), jangan `SPAN`.
+
 - **Satu global scope.** Apps Script menggabung semua `.gs` — fungsi bernama sama saling menimpa DIAM-DIAM.
   Sudah pernah kejadian: `_monthLabel()` di TurunBuku.gs sempat menimpa milik Kpi.gs (dipakai 3 banner KPI + Health),
   makanya helper bulan di sana diberi awalan `_tb`. Sebelum menambah helper, cek dulu:

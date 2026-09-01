@@ -819,6 +819,10 @@ function writeRestockTab(restock) {
   r = uiSection(sh, r, SPAN, 'DAFTAR SKU — urut: perlu aksi dulu, lalu Revenue-at-Risk', UI.INK);
   const headers = ['SKU', 'Nama', 'Tier', 'Skor', 'Demand/bln', 'Cust Unik', 'Stok', 'On Order', 'Posisi',
                    'Hari Cover', 'Target Stok', 'Reorder Pt', 'Status', 'Saran Order', 'Est. Biaya', 'RaR %', 'Prioritas Beli'];
+  // Lebar tabel DAFTAR SKU = jumlah header (17), BUKAN SPAN (19). SPAN adalah lebar tab untuk
+  // banner/section/merge seksi DAFTAR BELANJA. Sempat disamakan dan itu bikin fullSync gagal
+  // dengan "data has 17 but the range has 19" setiap kali Restock punya baris.
+  const SKU_COLS = headers.length;
   uiHeaderRow(sh, r, headers); r += 1;
   const dataStart = r;
 
@@ -846,7 +850,7 @@ function writeRestockTab(restock) {
         x.buyRank || ''
       ];
     });
-    sh.getRange(dataStart, 1, matrix.length, SPAN).setValues(matrix).setVerticalAlignment('middle');
+    sh.getRange(dataStart, 1, matrix.length, SKU_COLS).setValues(matrix).setVerticalAlignment('middle');
 
     const statusTint = function(s) {
       if (/^🔴/.test(s)) return UI.T_RED;

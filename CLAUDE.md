@@ -317,6 +317,17 @@ Setup role sheets (Ade/Deden)** (or Run it) → it creates + shares both files �
 
 ## Conventions
 
+- **JANGAN `setFrozenColumns` di tab yang punya banner/pita section ter-merge selebar tab.** Sheets menolak
+  ("can't freeze columns which contain only part of a merged cell") dan errornya melempar SETELAH baris ditulis,
+  jadi tulisan terakhir tak ter-flush dan seksi bawah tampak kosong — gejalanya menyesatkan, kelihatan seperti
+  data hilang, bukan seperti error format. Kena di Rapor Customer 2026-09-02. `setFrozenRows` aman selama
+  merge-nya per baris, tapi bekukan baris HEADER saja; membekukan sampai baris seksi ke-50 bikin Sheets
+  mengeluh "window is too small".
+
+- **Writer tab yang berbeda jangan bersarang dalam satu `try`.** Error di writer pertama akan menelan writer
+  kedua dan satu bug tampak seperti dua fitur hilang (Rapor Customer menjatuhkan Turun Buku, 2026-09-02).
+  Satu `try` per tab.
+
 - **Lebar range `setValues` HARUS sama dengan panjang array baris.** Ini meng-ABORT `fullSync` di tengah,
   bukan sekadar merusak tampilan, dan semua writer setelahnya ikut tidak jalan. Pernah kejadian: `writeRestockTab`
   memakai `SPAN` (19, lebar tab untuk banner/merge seksi DAFTAR BELANJA) sebagai lebar tabel DAFTAR SKU yang

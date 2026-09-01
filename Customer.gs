@@ -844,8 +844,14 @@ function writeCustomerTab(report) {
   // WAJIB sekali untuk semua blok: setConditionalFormatRules mengganti SELURUH aturan sheet,
   // jadi memanggilnya per blok akan menghapus aturan blok sebelumnya.
   _custCondFormats(sh, blocks);
-  sh.setFrozenRows(hrow);
-  sh.setFrozenColumns(1);
+  // JANGAN bekukan baris/kolom di tab ini.
+  //  - setFrozenColumns(n) DITOLAK Sheets ("can't freeze columns which contain only part of a
+  //    merged cell") karena banner dan setiap pita section di-merge selebar seluruh tab, jadi
+  //    batas beku berapa pun akan memotong sel gabungan. Errornya melempar SETELAH baris ditulis
+  //    sehingga tulisan terakhir tak sempat ter-flush dan seksi bawah tampak kosong.
+  //  - setFrozenRows(hrow) juga salah: hrow ada di baris ke-50-an (setelah RINGKAS + PERLU AKSI),
+  //    membekukan sebanyak itu membuat Sheets mengeluh jendelanya terlalu kecil.
+  // Tab ini punya beberapa seksi bertumpuk, jadi memang tidak cocok dibekukan.
 
   r = uiFootnote(sh, r, SPAN,
     '◆ Sisi bayar memakai SELURUH riwayat faktur; sisi margin maksimal ' +

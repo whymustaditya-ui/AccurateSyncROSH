@@ -168,9 +168,21 @@ function fullSync() {
     // inv.receipts (SEMUA faktur), margin dari _SkuSalesCache × _ItemCache (maks 6 bln, ikut prune
     // Restock), riwayat buku dari _MetricSnapshots yang baru saja distempel di atas. Nol call
     // Accurate, nol scope. FAIL-SOFT pola blok Restock/Kontak — tab saran tak boleh meng-abort sync.
-    try {
-      const rapor = buildCustomerReport(invoices, today, yCust);
-      writeCustomerTab(rapor);
+    // Dua writer DIPISAH try-nya: kalau satu tab gagal, yang lain tetap jalan. Sebelumnya
+    // writeTurunBukuTab bersarang di dalam try yang sama sehingga error di writeCustomerTab
+    // ikut menelan Turun Buku, dan satu bug tampak seperti dua fitur yang hilang.
+    let rapor = null;
+    try { rapor = buildCustomerReport(invoices, today, yCust); }
+    catch (e) {
+      Logger.log('Rapor Customer dilewati: ' + e.message);
+      try { _log('WARN', 'Rapor Customer dilewati: ' + e.message); } catch (e2) {}
+    }
+    if (rapor) {
+      try { writeCustomerTab(rapor); }
+      catch (e) {
+        Logger.log('Tab Rapor Customer dilewati: ' + e.message);
+        try { _log('WARN', 'Tab Rapor Customer dilewati: ' + e.message); } catch (e2) {}
+      }
       try { writeTurunBukuTab(buildTurunBuku(rapor, health, today, yTurun)); }
       catch (e) {
         // Fail-soft TAPI jangan senyap: tab yang hilang tanpa jejak bikin orang mengira
@@ -178,9 +190,6 @@ function fullSync() {
         Logger.log('Turun Buku dilewati: ' + e.message);
         try { _log('WARN', 'Turun Buku dilewati: ' + e.message); } catch (e2) {}
       }
-    } catch (e) {
-      Logger.log('Rapor Customer dilewati: ' + e.message);
-      try { _log('WARN', 'Rapor Customer dilewati: ' + e.message); } catch (e2) {}
     }
 
     writeSummaryTab(ctx, 'master', health);

@@ -290,7 +290,8 @@ function _custMarginStats(g, ctx) {
   const C = CONFIG.CUSTOMER;
   const out = { ok: false, cakupan: 0, cakupanBiaya: 0, omzetTercakup: 0, lineRevenue: 0,
                 hpp: 0, diskon: 0, marginKotor: 0, marginKotorPct: null, biayaModal: 0,
-                marginBersih: 0, marginBersihPct: null, naikPct: 0, rugiRp: 0, rugiPct: 0 };
+                marginBersih: 0, marginBersihPct: null, naikPct: 0, rugiRp: 0, rugiPct: 0,
+                costHist: 0, costSnap: 0, histPct: 0 };
   if (!ctx || !ctx.enabled) return out;
 
   let totWin = 0, totCovered = 0, costKnown = 0, costAll = 0;
@@ -311,11 +312,19 @@ function _custMarginStats(g, ctx) {
       if (_isNonInventory(L.itemNo, L.itemName)) return;   // bukan barang beli-jual
       out.lineRevenue += L.lineTotal;
       costAll += L.lineTotal;
+      // Harga beli historis (distempel saat panen) DIUTAMAKAN di atas snapshot hari ini.
+      // Harga beli naik-turun; tanpa ini faktur lama dibandingkan dengan modal terbaru dan
+      // ikut terhitung rugi padahal saat itu untung.
       const m = ctx.items[L.itemNo];
       let hppLine;
-      if (m && m.cost > 0) {
+      if (L.unitCost > 0) {
+        hppLine = L.qty * L.unitCost;
+        costKnown += L.lineTotal;
+        out.costHist += L.lineTotal;
+      } else if (m && m.cost > 0) {
         hppLine = L.qty * m.cost;
         costKnown += L.lineTotal;
+        out.costSnap += L.lineTotal;
       } else {
         // Item suspended / belum masuk item master → JANGAN dianggap gratis. Imputasi pakai
         // rasio HPP buku, dan porsinya dilaporkan lewat cakupanBiaya.
@@ -330,6 +339,8 @@ function _custMarginStats(g, ctx) {
   });
   out.cakupanBiaya = costAll > 0 ? costKnown / costAll : 0;
   out.rugiPct = out.lineRevenue > 0 ? out.rugiRp / out.lineRevenue : 0;
+  const costTot = out.costHist + out.costSnap;
+  out.histPct = costTot > 0 ? out.costHist / costTot : 0;   // share omzet berharga beli historis
 
   // Biaya modal: dihitung SEJAK FAKTUR TERBIT, bukan sejak telat. Tempo yang kita berikan juga
   // ada harganya — customer yang selalu bayar tepat hari ke-30 tetap memakan modal.
@@ -527,7 +538,8 @@ function buildCustomerReport(invoices, today, yMap) {
         (marginCtx.linesByInv[r.invoiceId] = marginCtx.linesByInv[r.invoiceId] || []).push(r);
         if (_isNonInventory(r.itemNo, r.itemName)) return;   // jangan cemari rasio HPP buku
         const m = marginCtx.items[r.itemNo];
-        if (m && m.cost > 0 && r.lineTotal > 0) { cKnown += r.qty * m.cost; cAll += r.lineTotal; }
+        const uc = r.unitCost > 0 ? r.unitCost : ((m && m.cost > 0) ? m.cost : 0);
+        if (uc > 0 && r.lineTotal > 0) { cKnown += r.qty * uc; cAll += r.lineTotal; }
       });
       if (cAll > 0) marginCtx.costRatio = clamp(cKnown / cAll, 0.2, 0.98);
     } catch (e) {
@@ -599,7 +611,7 @@ function buildCustomerReport(invoices, today, yMap) {
                    dinilai: list.filter(function(r) { return r.rank; }).length,
                    jumlah: list.length,
                    perVerdict: {}, cadangan: 0, marginBersih: 0, biayaModal: 0,
-                   lineRevenue: 0, rugiRp: 0, tempoCount: 0 };
+                   lineRevenue: 0, rugiRp: 0, costHist: 0, costSnap: 0, tempoCount: 0 };
   list.forEach(function(r) {
     const b = totals.perVerdict[r.verdict] = totals.perVerdict[r.verdict] || { n: 0, rp: 0 };
     b.n++; b.rp += r.outstanding;
@@ -609,6 +621,8 @@ function buildCustomerReport(invoices, today, yMap) {
       totals.biayaModal  += r.margin.biayaModal;
       totals.lineRevenue += r.margin.lineRevenue;
       totals.rugiRp      += r.margin.rugiRp;
+      totals.costHist    += r.margin.costHist;
+      totals.costSnap    += r.margin.costSnap;
     }
     if (!r.isCod && r.tempoModus != null && r.tempoModus > CONFIG.CUSTOMER.COD_TEMPO_MAX) totals.tempoCount++;
   });
@@ -687,9 +701,16 @@ function writeCustomerTab(report) {
       rupiah(t.lineRevenue)]);
     if (t.rugiRp > 0) {
       const rp = t.lineRevenue > 0 ? t.rugiRp / t.lineRevenue : 0;
+      const hist = (t.costHist + t.costSnap) > 0 ? t.costHist / (t.costHist + t.costSnap) : 0;
       ringkas.push(['⚠ Dijual di bawah modal', t.rugiRp,
-        (rp * 100).toFixed(1) + '% dari omzet. Entah harga beli di Accurate sudah basi, ' +
-        'atau harga jualnya memang perlu naik. Jalankan menu Diag jual di bawah modal.']);
+        (rp * 100).toFixed(1) + '% dari omzet. ' +
+        (hist < 0.5
+          ? 'HATI-HATI membacanya: baru ' + Math.round(hist * 100) + '% omzet yang punya harga beli ' +
+            'historis, sisanya dibandingkan dengan harga beli HARI INI, padahal harga beli naik-turun. ' +
+            'Faktur lama bisa kelihatan rugi padahal saat itu untung. Jalankan menu Diag jual di bawah modal ' +
+            'dan lihat sebaran per bulan.'
+          : 'Harga beli historis sudah menutup ' + Math.round(hist * 100) + '% omzet, jadi angka ini ' +
+            'sudah cukup bisa dipercaya. Jalankan menu Diag jual di bawah modal untuk rinciannya.')]);
     }
   } else {
     ringkas.push(['Sisi margin', 'BELUM AKTIF',
@@ -1022,38 +1043,73 @@ function diagCustomerMargin(customerName) {
 function diagBelowCost() {
   const items = _loadItemCache();
   const rows = _loadSkuSalesCache();
-  const perSku = {};
-  let totalOmzet = 0, totalRugi = 0, nBaris = 0;
+  const perSku = {}, perBulan = {};
+  let totalOmzet = 0, totalRugi = 0, nBaris = 0, omzetHist = 0, omzetSnap = 0;
+
   rows.forEach(function(r) {
     if (!r.itemNo || !(r.lineTotal > 0) || !(r.qty > 0)) return;
     if (_isNonInventory(r.itemNo, r.itemName)) return;
     const m = items[r.itemNo];
-    if (!m || !(m.cost > 0)) return;
-    const hpp = r.qty * m.cost;
+    // Harga beli historis diutamakan; kalau baris ini dipanen sebelum kolom unitCost ada,
+    // terpaksa pakai snapshot hari ini DAN itu ditandai supaya tidak salah dibaca.
+    const hist = r.unitCost > 0;
+    const cost = hist ? r.unitCost : ((m && m.cost > 0) ? m.cost : 0);
+    if (!(cost > 0)) return;
+    const hpp = r.qty * cost;
     totalOmzet += r.lineTotal;
+    if (hist) omzetHist += r.lineTotal; else omzetSnap += r.lineTotal;
+
+    const bln = r.transDate ? Utilities.formatDate(r.transDate, 'GMT+7', 'yyyy-MM') : '(tanpa tanggal)';
+    const bb = perBulan[bln] || (perBulan[bln] = { omzet: 0, rugi: 0, n: 0, nRugi: 0, hist: 0 });
+    bb.omzet += r.lineTotal; bb.n++;
+    if (hist) bb.hist += r.lineTotal;
+
     if (hpp / r.lineTotal < CONFIG.CUSTOMER.BELOW_COST_RATIO) return;
-    nBaris++;
-    totalRugi += r.lineTotal;
+    nBaris++; totalRugi += r.lineTotal;
+    bb.rugi += r.lineTotal; bb.nRugi++;
     const a = perSku[r.itemNo] || (perSku[r.itemNo] = {
-      nama: r.itemName || (m ? m.name : ''), cost: m.cost, n: 0, omzet: 0, hpp: 0, qty: 0 });
+      nama: r.itemName || (m ? m.name : ''), costNow: m ? m.cost : 0,
+      n: 0, omzet: 0, hpp: 0, qty: 0, nHist: 0 });
     a.n++; a.omzet += r.lineTotal; a.hpp += hpp; a.qty += r.qty;
+    if (hist) a.nHist++;
   });
-  Logger.log('=== SKU DIJUAL DI BAWAH MODAL ===');
-  Logger.log(nBaris + ' baris · nilai ' + rupiah(totalRugi) + ' dari omzet ' + rupiah(totalOmzet) +
+
+  Logger.log('=== SEBARAN PER BULAN — ini yang menjawab "apa ini faktur-faktur lama?" ===');
+  Logger.log('Kalau porsi rugi MENGECIL di bulan-bulan terakhir, penyebabnya harga beli yang naik');
+  Logger.log('(faktur lama dibandingkan modal baru). Kalau RATA termasuk bulan terakhir, berarti');
+  Logger.log('diskon di lapangan memang menembus modal. Kolom "hist" = share omzet yang sudah');
+  Logger.log('memakai harga beli historis; makin tinggi makin bisa dipercaya barisnya.');
+  Object.keys(perBulan).sort().forEach(function(k) {
+    const b = perBulan[k];
+    Logger.log('  ' + k + ' · omzet ' + rupiah(b.omzet) +
+      ' · rugi ' + rupiah(b.rugi) +
+      ' (' + (b.omzet > 0 ? (b.rugi / b.omzet * 100).toFixed(1) : '0') + '%)' +
+      ' · ' + b.nRugi + '/' + b.n + ' baris' +
+      ' · hist ' + (b.omzet > 0 ? Math.round(b.hist / b.omzet * 100) : 0) + '%');
+  });
+
+  Logger.log('=== RINGKAS ===');
+  Logger.log(nBaris + ' baris di bawah modal · nilai ' + rupiah(totalRugi) +
+    ' dari omzet ' + rupiah(totalOmzet) +
     ' (' + (totalOmzet > 0 ? (totalRugi / totalOmzet * 100).toFixed(1) : 0) + '%)');
+  Logger.log('Harga beli historis menutup ' +
+    (totalOmzet > 0 ? Math.round(omzetHist / totalOmzet * 100) : 0) + '% omzet; sisanya (' +
+    rupiah(omzetSnap) + ') masih dibandingkan dengan harga beli HARI INI.');
+
+  Logger.log('=== PER SKU (urut selisih terbesar) ===');
   Object.keys(perSku)
     .map(function(k) { var a = perSku[k]; a.kode = k; a.beda = a.hpp - a.omzet; return a; })
     .sort(function(a, b) { return b.beda - a.beda; })
     .forEach(function(a) {
-      Logger.log('  ' + a.kode + ' · ' + a.nama + ' · ' + a.n + ' baris · qty ' + a.qty +
+      Logger.log('  ' + a.kode + ' · ' + a.nama + ' · ' + a.n + ' baris (' + a.nHist +
+        ' pakai harga historis) · qty ' + a.qty +
         ' · jual ' + rupiah(a.omzet) + ' vs modal ' + rupiah(a.hpp) +
         ' · SELISIH ' + rupiah(a.beda) +
-        ' · harga beli tercatat ' + rupiah(a.cost) + '/CTN' +
-        ' · jual rata2 ' + rupiah(a.qty > 0 ? a.omzet / a.qty : 0) + '/CTN');
+        ' · jual rata2 ' + rupiah(a.qty > 0 ? a.omzet / a.qty : 0) + '/CTN' +
+        ' vs harga beli sekarang ' + rupiah(a.costNow) + '/CTN');
     });
-  Logger.log('Bandingkan "harga beli tercatat" dengan faktur pembelian TERAKHIR. Kalau tidak cocok, ' +
-    'perbaiki vendorPrice di master item Accurate lalu Refresh Restock. Kalau cocok, berarti ' +
-    'harga jual SKU ini memang di bawah modal dan harus dinaikkan.');
+  Logger.log('Baris yang BELUM pakai harga historis akan terisi sendiri seiring faktur baru dipanen. ' +
+    'Untuk baris lama, bandingkan "jual rata2" dengan harga beli pada PERIODE faktur itu, bukan hari ini.');
 }
 
 // Menu manual: hitung ulang kedua tab tanpa menunggu sync jam 5 pagi.

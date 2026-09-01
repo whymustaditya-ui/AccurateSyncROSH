@@ -129,7 +129,14 @@ function refreshItemMaster() {
 // Time-budgeted via SYNC_START — pola attachCustomerContacts (Sync.gs).
 // ─────────────────────────────────────────────────────────────────────────────
 var SKU_SALES_SHEET   = '_SkuSalesCache';
-var SKU_SALES_HEADERS = ['invoiceId', 'transDate', 'itemNo', 'itemName', 'qty', 'lineTotal', 'customerId'];
+// unitCost (kolom 8, ditambah 2026-09-02) = harga beli per satuan SAAT BARIS ITU DIPANEN.
+// Sebelumnya margin membandingkan harga jual lama dengan `vendorPrice` HARI INI, padahal harga
+// beli naik-turun — faktur lama jadi kelihatan "dijual di bawah modal" padahal waktu itu untung.
+// Migrasi SENGAJA tidak menghapus baris lama (beda dengan _itemCacheSheet): meng-harvest ulang
+// faktur lama pun tetap menstempel harga HARI INI, jadi wipe tidak memulihkan sejarah apa pun,
+// cuma membuang data. Baris lama dibiarkan kosong dan jatuh ke harga snapshot seperti dulu.
+var SKU_SALES_HEADERS = ['invoiceId', 'transDate', 'itemNo', 'itemName', 'qty', 'lineTotal', 'customerId', 'unitCost'];
+var SKU_SALES_SPAN    = SKU_SALES_HEADERS.length;   // 8
 var SKU_HARVEST_BUDGET_MS = 300000;  // berhenti ~5 menit → sisakan ≥1 menit untuk writers
 var SKU_HARVEST_MAX       = 250;     // batas keras detail.do per run
 
@@ -138,8 +145,13 @@ function _skuSalesSheet() {
   let sh = ss.getSheetByName(SKU_SALES_SHEET);
   if (!sh) {
     sh = ss.insertSheet(SKU_SALES_SHEET);
-    sh.getRange(1, 1, 1, SKU_SALES_HEADERS.length).setValues([SKU_SALES_HEADERS]);
+    sh.getRange(1, 1, 1, SKU_SALES_SPAN).setValues([SKU_SALES_HEADERS]);
     sh.hideSheet();
+    return sh;
+  }
+  // Migrasi aditif: header lama (7 kolom) cukup ditambahi kolom unitCost, baris lama DIPERTAHANKAN.
+  if (sh.getLastColumn() < SKU_SALES_SPAN) {
+    sh.getRange(1, 1, 1, SKU_SALES_SPAN).setValues([SKU_SALES_HEADERS]);
   }
   return sh;
 }
@@ -149,7 +161,7 @@ function _loadSkuSalesCache() {
   const last = sh.getLastRow();
   const out = [];
   if (last >= 2) {
-    sh.getRange(2, 1, last - 1, 7).getValues().forEach(function(r) {
+    sh.getRange(2, 1, last - 1, SKU_SALES_SPAN).getValues().forEach(function(r) {
       out.push({
         invoiceId: r[0],
         transDate: parseAccDate(r[1]),
@@ -157,7 +169,8 @@ function _loadSkuSalesCache() {
         itemName: r[3] || '',
         qty: num(r[4]),
         lineTotal: num(r[5]),
-        customerId: r[6]
+        customerId: r[6],
+        unitCost: num(r[7])            // 0 = baris lama, pakai harga snapshot hari ini
       });
     });
   }
@@ -179,18 +192,18 @@ function _loadHarvestedSet() {
 function _appendSkuSales(rows) {
   const sh = _skuSalesSheet();
   const start = sh.getLastRow() + 1;
-  sh.getRange(start, 1, rows.length, 7).setValues(rows);
+  sh.getRange(start, 1, rows.length, SKU_SALES_SPAN).setValues(rows);
 }
 
 function _pruneSkuSales(winStart) {
   const sh = _skuSalesSheet();
   const last = sh.getLastRow();
   if (last < 2) return;
-  const vals = sh.getRange(2, 1, last - 1, 7).getValues();
+  const vals = sh.getRange(2, 1, last - 1, SKU_SALES_SPAN).getValues();
   const keep = vals.filter(function(r) { const d = parseAccDate(r[1]); return d && d >= winStart; });
   if (keep.length === vals.length) return;          // tidak ada yang basi
-  sh.getRange(2, 1, last - 1, 7).clearContent();
-  if (keep.length) sh.getRange(2, 1, keep.length, 7).setValues(keep);
+  sh.getRange(2, 1, last - 1, SKU_SALES_SPAN).clearContent();
+  if (keep.length) sh.getRange(2, 1, keep.length, SKU_SALES_SPAN).setValues(keep);
 }
 
 function harvestSkuSales(invoices, today) {
@@ -201,6 +214,11 @@ function harvestSkuSales(invoices, today) {
   const harvested = _loadHarvestedSet();
   const toAppend = [];
   let pulls = 0, fails = 0, skipped = 0;
+  // Harga beli SAAT INI, distempel ke tiap baris yang dipanen sekarang. Faktur yang dipanen hari
+  // ini memang berumur beberapa hari saja, jadi harga hari ini praktis = harga saat transaksi.
+  // Nilainya beku di baris tersebut sehingga sync bulan depan tidak menggeser margin masa lalu.
+  let costNow = {};
+  try { costNow = _loadItemCache(); } catch (e) { Logger.log('unitCost dilewati: ' + e.message); }
 
   for (let k = 0; k < invoices.length; k++) {
     const inv = invoices[k];
@@ -216,7 +234,7 @@ function harvestSkuSales(invoices, today) {
       const dateStr = Utilities.formatDate(inv.transDate, 'GMT+7', 'yyyy-MM-dd');
       const cust = (inv.customerId != null) ? inv.customerId : '';
       if (!items.length) {
-        toAppend.push([inv.id, dateStr, '', '', 0, 0, cust]);   // sentinel: harvested, no items
+        toAppend.push([inv.id, dateStr, '', '', 0, 0, cust, 0]);  // sentinel: harvested, no items
       } else {
         for (let j = 0; j < items.length; j++) {
           const it = items[j];
@@ -224,7 +242,8 @@ function harvestSkuSales(invoices, today) {
           const nm = (it.item && it.item.name) || it.detailName || it.itemName || it.name || '';
           const qty = num(it.quantity != null ? it.quantity : it.qty);
           const ltot = num(it.totalPrice != null ? it.totalPrice : (it.amount != null ? it.amount : 0));
-          toAppend.push([inv.id, dateStr, no, nm, qty, ltot, cust]);
+          const cm = costNow[no];
+          toAppend.push([inv.id, dateStr, no, nm, qty, ltot, cust, (cm && cm.cost > 0) ? cm.cost : 0]);
         }
       }
       harvested[inv.id] = true;

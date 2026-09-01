@@ -214,6 +214,14 @@ const CONFIG = {
     NON_INVENTORY_CODES:  ['1', '2', '100005'],
     NON_INVENTORY_RE:     /pembelian aset|jasa pengiriman|inventaris|biaya kirim|ongkos kirim/i,
 
+    // Bulan yang basis harga belinya TIDAK bisa dipercaya dikeluarkan dari perhitungan margin.
+    // Deteksinya otomatis: kalau di satu bulan porsi omzet "di bawah modal" melompat melewati
+    // ambang ini PADAHAL barisnya masih memakai harga beli snapshot (belum ada unitCost), yang
+    // terjadi hampir pasti bukan jualan rugi massal melainkan harga beli yang sudah berubah
+    // sejak bulan itu. Diag 2026-09-02 memperlihatkan lompatan itu telanjang: Maret 87,1% lalu
+    // April & Mei 0,0%, Juni-Agustus 0,2-2,1%. Pergeseran harga bertahap tidak membentuk tangga
+    // seperti itu; kenaikan harga beli sekitar April membentuknya persis.
+    MONTH_DISTRUST_PCT:   0.25,
     // Ambang "dijual di bawah modal" (rasio hpp/jual). 1.0 = pas modal. Dipakai untuk MENGHITUNG
     // porsi omzet yang dijual rugi + daftar diagBelowCost(). Diag 2026-09-02 menemukan 167 baris
     // seperti ini — entah harga beli di Accurate sudah basi, atau harga jualnya memang perlu naik.

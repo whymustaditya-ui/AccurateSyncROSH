@@ -286,6 +286,11 @@ function _custRiskScore(p, priorBuku) {
 // faktur adalah ukuran yang benar — DAN membuat diskon faktur bisa di-netto secara EKSAK,
 // bukan dialokasikan ke baris.
 // ─────────────────────────────────────────────────────────────────────────────
+function _custBadMonth(ctx, d) {
+  if (!d || !ctx.badMonths) return false;
+  return !!ctx.badMonths[Utilities.formatDate(d, 'GMT+7', 'yyyy-MM')];
+}
+
 function _custMarginStats(g, ctx) {
   const C = CONFIG.CUSTOMER;
   const out = { ok: false, cakupan: 0, cakupanBiaya: 0, omzetTercakup: 0, lineRevenue: 0,
@@ -299,6 +304,7 @@ function _custMarginStats(g, ctx) {
 
   g.invs.forEach(function(i) {
     if (!i.transDate || i.transDate < ctx.winStart) return;
+    if (_custBadMonth(ctx, i.transDate)) return;   // basis harga beli bulan itu tak dipercaya
     totWin += i.total;
     if (ctx.coveredIds[i.id]) { totCovered += i.total; coveredInvs.push(i); }
   });
@@ -524,7 +530,7 @@ function buildCustomerReport(invoices, today, yMap) {
   // ── konteks margin (Fase 3) ──
   const marginCtx = { enabled: !!C.MARGIN_ENABLED, today: today, coveredIds: {}, linesByInv: {},
                       items: {}, costRatio: C.FALLBACK_COST_RATIO, winStart: null,
-                      fakturTercakup: 0, fakturTotal: 0 };
+                      fakturTercakup: 0, fakturTotal: 0, badMonths: {} };
   if (marginCtx.enabled) {
     try {
       const winMonths = Math.min(C.MARGIN_WINDOW_MONTHS, CONFIG.RESTOCK.WINDOW_MONTHS);
@@ -542,6 +548,33 @@ function buildCustomerReport(invoices, today, yMap) {
         if (uc > 0 && r.lineTotal > 0) { cKnown += r.qty * uc; cAll += r.lineTotal; }
       });
       if (cAll > 0) marginCtx.costRatio = clamp(cKnown / cAll, 0.2, 0.98);
+
+      // Bulan yang basis harga belinya tidak dipercaya (lihat CONFIG.MONTH_DISTRUST_PCT).
+      // Dikeluarkan SEPENUHNYA dari margin: omzet, cakupan, hpp, dan biaya modal.
+      const perBulan = {};
+      rows.forEach(function(r) {
+        if (!r.itemNo || !(r.lineTotal > 0) || !(r.qty > 0)) return;
+        if (_isNonInventory(r.itemNo, r.itemName)) return;
+        const it = marginCtx.items[r.itemNo];
+        const cost = r.unitCost > 0 ? r.unitCost : ((it && it.cost > 0) ? it.cost : 0);
+        if (!(cost > 0) || !r.transDate) return;
+        const bln = Utilities.formatDate(r.transDate, 'GMT+7', 'yyyy-MM');
+        const bb = perBulan[bln] || (perBulan[bln] = { omzet: 0, rugi: 0, hist: 0 });
+        bb.omzet += r.lineTotal;
+        if (r.unitCost > 0) bb.hist += r.lineTotal;
+        if ((r.qty * cost) / r.lineTotal >= CONFIG.CUSTOMER.BELOW_COST_RATIO) bb.rugi += r.lineTotal;
+      });
+      Object.keys(perBulan).forEach(function(k) {
+        const b = perBulan[k];
+        if (!(b.omzet > 0)) return;
+        const share = b.rugi / b.omzet;
+        const histShare = b.hist / b.omzet;
+        // Hanya curigai bulan yang MASIH bergantung harga snapshot. Kalau harga historis sudah
+        // menutup mayoritas barisnya, angka rugi di situ memang nyata dan harus ditampilkan.
+        if (share > CONFIG.CUSTOMER.MONTH_DISTRUST_PCT && histShare < 0.5) {
+          marginCtx.badMonths[k] = Math.round(share * 100);
+        }
+      });
     } catch (e) {
       Logger.log('Konteks margin dilewati: ' + e.message);
       marginCtx.enabled = false;
@@ -567,6 +600,7 @@ function buildCustomerReport(invoices, today, yMap) {
   if (marginCtx.enabled) {
     invoices.forEach(function(i) {
       if (!i.transDate || i.transDate < marginCtx.winStart) return;
+      if (_custBadMonth(marginCtx, i.transDate)) return;
       marginCtx.fakturTotal++;
       if (marginCtx.coveredIds[i.id]) marginCtx.fakturTercakup++;
     });
@@ -691,6 +725,14 @@ function writeCustomerTab(report) {
     if (b) ringkas.push([v, b.n + ' customer', 'nunggak ' + rupiah(b.rp)]);
   });
   if (mc.enabled) {
+    const bad = Object.keys(mc.badMonths || {});
+    if (bad.length) {
+      ringkas.push(['Bulan dikecualikan dari margin', bad.sort().join(', '),
+        'Di bulan itu sebagian besar omzet terbaca "di bawah modal" (' +
+        bad.map(function(k) { return mc.badMonths[k] + '%'; }).join(', ') + ') padahal ' +
+        'perbandingannya memakai harga beli HARI INI. Yang berubah harga belinya, bukan cara jualnya, ' +
+        'jadi bulan itu tidak dipakai menghitung margin.']);
+    }
     ringkas.push(['Kualitas data margin',
       mc.fakturTercakup + ' / ' + mc.fakturTotal + ' faktur ketarik',
       mc.fakturTercakup < mc.fakturTotal

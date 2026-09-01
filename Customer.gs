@@ -439,10 +439,15 @@ function _custVerdict(p, m, sc, arBook) {
     limit = 0; tempo = 0;                       // invariant: STOP ⇒ limit 0, tempo 0
   } else if (marginTipis) {
     verdict = '🟠 NAIKKAN HARGA';
+    const bandLo = Math.round(C.MARGIN_BAND_LOW * 100);
     alasan = 'Bayarnya ' + (sc.band === 'AMAN' ? 'rapi' : 'lumayan') + ' (skor ' + sc.skor +
              ') tapi margin bersihnya cuma ' + (m.marginBersihPct * 100).toFixed(1) +
-             '% setelah biaya modal. Naikkan harga ' + (m.naikPct * 100).toFixed(1) +
-             '% dulu sebelum order berikutnya.';
+             '% setelah biaya modal' +
+             (m.marginKotorPct != null && m.marginKotorPct < C.MARGIN_BAND_LOW
+               ? ', dan margin kotornya ' + (m.marginKotorPct * 100).toFixed(1) +
+                 '% sudah di bawah band normal ' + bandLo + '%'
+               : '') +
+             '. Naikkan harga ' + (m.naikPct * 100).toFixed(1) + '% dulu sebelum order berikutnya.';
   } else if (sc.band === 'AMAN') {
     verdict = '🟢 GAS';
     alasan = 'Bayar rapi (skor ' + sc.skor + '). Order baru jalan normal.';
@@ -559,10 +564,12 @@ function buildCustomerReport(invoices, today, yMap) {
         const cost = r.unitCost > 0 ? r.unitCost : ((it && it.cost > 0) ? it.cost : 0);
         if (!(cost > 0) || !r.transDate) return;
         const bln = Utilities.formatDate(r.transDate, 'GMT+7', 'yyyy-MM');
-        const bb = perBulan[bln] || (perBulan[bln] = { omzet: 0, rugi: 0, hist: 0 });
+        const bb = perBulan[bln] || (perBulan[bln] = { omzet: 0, rugi: 0, hist: 0, hpp: 0 });
+        const hpp = r.qty * cost;
         bb.omzet += r.lineTotal;
+        bb.hpp += hpp;
         if (r.unitCost > 0) bb.hist += r.lineTotal;
-        if ((r.qty * cost) / r.lineTotal >= CONFIG.CUSTOMER.BELOW_COST_RATIO) bb.rugi += r.lineTotal;
+        if (hpp / r.lineTotal >= CONFIG.CUSTOMER.BELOW_COST_RATIO) bb.rugi += r.lineTotal;
       });
       Object.keys(perBulan).forEach(function(k) {
         const b = perBulan[k];
@@ -571,8 +578,12 @@ function buildCustomerReport(invoices, today, yMap) {
         const histShare = b.hist / b.omzet;
         // Hanya curigai bulan yang MASIH bergantung harga snapshot. Kalau harga historis sudah
         // menutup mayoritas barisnya, angka rugi di situ memang nyata dan harus ditampilkan.
-        if (share > CONFIG.CUSTOMER.MONTH_DISTRUST_PCT && histShare < 0.5) {
-          marginCtx.badMonths[k] = Math.round(share * 100);
+        if (histShare >= 0.5) return;          // sudah pakai harga historis → angkanya nyata
+        const gross = (b.omzet - b.hpp) / b.omzet;
+        if (share > CONFIG.CUSTOMER.MONTH_DISTRUST_PCT) {
+          marginCtx.badMonths[k] = { arah: 'rugi', nilai: Math.round(share * 100) };
+        } else if (gross > CONFIG.CUSTOMER.MONTH_DISTRUST_HIGH_PCT) {
+          marginCtx.badMonths[k] = { arah: 'untung', nilai: Math.round(gross * 100) };
         }
       });
     } catch (e) {
@@ -644,7 +655,7 @@ function buildCustomerReport(invoices, today, yMap) {
                    priorBuku: priorBuku, marginCtx: marginCtx,
                    dinilai: list.filter(function(r) { return r.rank; }).length,
                    jumlah: list.length,
-                   perVerdict: {}, cadangan: 0, marginBersih: 0, biayaModal: 0,
+                   perVerdict: {}, cadangan: 0, marginBersih: 0, marginKotor: 0, biayaModal: 0,
                    lineRevenue: 0, rugiRp: 0, costHist: 0, costSnap: 0, tempoCount: 0 };
   list.forEach(function(r) {
     const b = totals.perVerdict[r.verdict] = totals.perVerdict[r.verdict] || { n: 0, rp: 0 };
@@ -652,6 +663,7 @@ function buildCustomerReport(invoices, today, yMap) {
     totals.cadangan += r.cadangan;
     if (r.margin.ok) {
       totals.marginBersih += r.margin.marginBersih;
+      totals.marginKotor += r.margin.marginKotor;
       totals.biayaModal  += r.margin.biayaModal;
       totals.lineRevenue += r.margin.lineRevenue;
       totals.rugiRp      += r.margin.rugiRp;
@@ -725,18 +737,30 @@ function writeCustomerTab(report) {
     if (b) ringkas.push([v, b.n + ' customer', 'nunggak ' + rupiah(b.rp)]);
   });
   if (mc.enabled) {
-    const bad = Object.keys(mc.badMonths || {});
+    const bad = Object.keys(mc.badMonths || {}).sort();
     if (bad.length) {
-      ringkas.push(['Bulan dikecualikan dari margin', bad.sort().join(', '),
-        'Di bulan itu sebagian besar omzet terbaca "di bawah modal" (' +
-        bad.map(function(k) { return mc.badMonths[k] + '%'; }).join(', ') + ') padahal ' +
-        'perbandingannya memakai harga beli HARI INI. Yang berubah harga belinya, bukan cara jualnya, ' +
-        'jadi bulan itu tidak dipakai menghitung margin.']);
+      ringkas.push(['Bulan dikecualikan dari margin',
+        bad.map(function(k) {
+          const x = mc.badMonths[k];
+          return k + ' (' + (x.arah === 'rugi' ? 'rugi ' : 'untung ') + x.nilai + '%)';
+        }).join(', '),
+        'Angka bulan itu jauh di luar band margin normal ' +
+        Math.round(CONFIG.CUSTOMER.MARGIN_BAND_LOW * 100) + '-' +
+        Math.round(CONFIG.CUSTOMER.MARGIN_BAND_HIGH * 100) + '%, padahal perbandingannya masih ' +
+        'memakai harga beli HARI INI. Yang berubah harga belinya, bukan cara jualnya, jadi bulan ' +
+        'itu tidak ikut dihitung. Akan pulih sendiri begitu harga beli historis terkumpul.']);
     }
     ringkas.push(['Kualitas data margin',
       mc.fakturTercakup + ' / ' + mc.fakturTotal + ' faktur ketarik',
       mc.fakturTercakup < mc.fakturTotal
         ? '⚠ Belum lengkap. Run Full Sync lagi sampai penuh.' : '✓ lengkap']);
+    const gpm = t.lineRevenue > 0 ? t.marginKotor / t.lineRevenue : null;
+    ringkas.push(['Margin kotor buku', gpm == null ? '-' : (gpm * 100).toFixed(1) + '%',
+      'COCOKKAN dengan Gross Profit Margin di laporan Accurate (Rasio Keuangan Per Bulan). ' +
+      'Kalau selisihnya lebih dari 2 poin, ada yang salah di sisi harga beli dan angka margin ' +
+      'per customer di bawah belum layak dipakai. Band normal ' +
+      Math.round(CONFIG.CUSTOMER.MARGIN_BAND_LOW * 100) + '-' +
+      Math.round(CONFIG.CUSTOMER.MARGIN_BAND_HIGH * 100) + '%.']);
     ringkas.push(['Margin bersih buku', t.marginBersih,
       'setelah biaya modal ' + rupiah(t.biayaModal) + ' (' +
       Math.round(CONFIG.CUSTOMER.COST_OF_CAPITAL_ANNUAL * 100) + '% per tahun) atas omzet ' +
@@ -945,8 +969,9 @@ function _custCaraBaca(sh, row, SPAN) {
     ['Telat Terlama', 'Faktur terbuka paling lama, dihitung dari jatuh tempo. Kalau lewat ' + CONFIG.CUSTOMER.STOP_DPD + ' hari, Keputusan langsung merah berapa pun skornya.'],
     ['Belanja / bln', 'Rata rata nilai faktur per bulan selama ' + CONFIG.CUSTOMER.LIMIT_WINDOW_MONTHS + ' bulan terakhir. Ini dasar hitungan Saran Limit.'],
     ['Cakupan Data', 'Berapa persen faktur customer ini yang rincian barangnya sudah ketarik dari Accurate. Di bawah ' + Math.round(CONFIG.CUSTOMER.MIN_COVERAGE * 100) + '% berwarna kuning dan semua kolom margin ditulis belum bisa dihitung, karena menebak margin dari data separuh lebih berbahaya daripada tidak menampilkannya.'],
-    ['Margin Kotor', 'Nilai jual barang dikurangi harga beli, sudah dikurangi diskon faktur. Harga beli memakai harga beli TERAKHIR di Accurate, jadi angka ini indikatif untuk membandingkan antar customer, bukan angka pembukuan.'],
+    ['Margin Kotor', 'Nilai jual barang dikurangi harga beli, sudah dikurangi diskon faktur. Band normal ROSH ' + Math.round(CONFIG.CUSTOMER.MARGIN_BAND_LOW * 100) + ' sampai ' + Math.round(CONFIG.CUSTOMER.MARGIN_BAND_HIGH * 100) + ' persen; di bawah itu berarti harga kurang, jauh di atas itu biasanya untung sesaat atau harga beli yang sudah berubah. Harga beli dipakai yang tercatat saat faktur dipanen; untuk faktur lama yang belum sempat terekam, dipakai harga beli terakhir sehingga sifatnya indikatif, bukan angka pembukuan.'],
     ['Biaya Modal', 'Harga dari uang yang nongkrong di customer. Dihitung sejak faktur terbit sampai uang benar benar masuk, bukan cuma hari telatnya, karena tempo yang kita berikan juga ada biayanya. Tarif ' + Math.round(CONFIG.CUSTOMER.COST_OF_CAPITAL_ANNUAL * 100) + '% per tahun.'],
+    ['Cek kewajaran', 'Angka Margin kotor buku di bagian RINGKAS harus mendekati Gross Profit Margin di laporan Accurate (menu Laporan, Rasio Keuangan Per Bulan). Itu pembanding dari luar sistem ini, jadi kalau keduanya berjauhan, yang salah kemungkinan besar harga beli di master barang, bukan cara customer membayar.'],
     ['Margin Bersih', 'Margin Kotor dikurangi Biaya Modal. Inilah angka yang membongkar pola omzet besar margin tipis: kalau dia bayarnya lambat, biaya modal memakan habis marginnya dan kolom ini jadi merah walaupun omzetnya kelihatan mantap.'],
     ['Cadangan Risiko', 'Perkiraan bagian tagihan yang berpotensi tidak tertagih, dihitung dari umur tunggakannya.'],
     ['Saran Limit', 'Belanja per bulan dikali panjang tempo dibagi 30, dikali kelonggaran sesuai risiko. Artinya cukup untuk satu siklus tempo penuh plus cadangan. Dibatasi maksimal ' + Math.round(CONFIG.CUSTOMER.CONC_PCT * 100) + '% dari total piutang ROSH supaya tidak ada satu customer pun yang bisa menjatuhkan kita sendirian.'],

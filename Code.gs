@@ -222,6 +222,15 @@ const CONFIG = {
     // April & Mei 0,0%, Juni-Agustus 0,2-2,1%. Pergeseran harga bertahap tidak membentuk tangga
     // seperti itu; kenaikan harga beli sekitar April membentuknya persis.
     MONTH_DISTRUST_PCT:   0.25,
+    // Sisi sebaliknya. Kalau harga beli TURUN dan snapshot memakai harga baru yang lebih murah,
+    // penjualan lama dengan harga lama akan tampak untung luar biasa. Bentuk kesalahannya cermin
+    // dari kasus Maret, jadi deteksinya harus simetris: margin kotor sebulan yang jauh MELEWATI
+    // band normal, sementara barisnya masih bergantung harga snapshot, sama tidak dipercayanya.
+    // Diset di atas puncak band (22%) supaya bulan yang memang bagus tidak ikut terbuang.
+    // Catatan: windfall SUNGGUHAN (beli murah sebelum harga naik, jual di harga baru) juga kena
+    // saringan ini, dan itu memang disengaja. Untuk menilai kelayakan customer kita ingin ekonomi
+    // yang berulang, bukan untung sekali lewat; bulan yang dibuang tetap diumumkan di RINGKAS.
+    MONTH_DISTRUST_HIGH_PCT: 0.32,
     // Ambang "dijual di bawah modal" (rasio hpp/jual). 1.0 = pas modal. Dipakai untuk MENGHITUNG
     // porsi omzet yang dijual rugi + daftar diagBelowCost(). Diag 2026-09-02 menemukan 167 baris
     // seperti ini — entah harga beli di Accurate sudah basi, atau harga jualnya memang perlu naik.
@@ -231,7 +240,18 @@ const CONFIG = {
     MIN_COST_COVERAGE:    0.85,  // share omzet baris yang punya harga beli ASLI (bukan imputasi)
     MIN_OMZET_RP:         10000000,
     FALLBACK_COST_RATIO:  0.80,  // dipakai kalau _ItemCache kosong (scope item_view belum grant)
-    TARGET_MARGIN_PCT:    0.12,  // margin bersih sehat setelah biaya modal
+    // Band margin KOTOR normal ROSH menurut Bro (2026-09-02): 14-22%. Dipakai untuk menilai
+    // kewajaran, bukan cuma sebagai hiasan: margin di bawah band = harga kurang, di atas band
+    // jauh = kemungkinan windfall atau basis harga beli yang sudah geser.
+    MARGIN_BAND_LOW:      0.14,
+    MARGIN_BAND_HIGH:     0.22,
+    // Ambang margin BERSIH sehat (setelah biaya modal). Diturunkan 0.12 -> 0.10 pada 2026-09-02
+    // setelah band 14-22% diketahui. Hitungannya: customer di DASAR band (14%) yang bayar 30 hari
+    // menyisakan 12,0% bersih, jadi ambang 0.12 akan menandai bahkan pelanggan normal yang cuma
+    // agak lambat, dan dengan weighted gross ROSH 15,6% itu berarti separuh buku jadi oranye
+    // (tab kehilangan sinyal). Ambang 0.10 menandai dasar-band yang bayar >61 hari, dan siapa pun
+    // yang marginnya memang di bawah band. Naikkan lagi kalau ingin lebih galak.
+    TARGET_MARGIN_PCT:    0.10,
     NAIK_HARGA_MAX:       0.25,  // saran kenaikan harga diplafon 25%
 
     // Biaya modal piutang. 24%/th = 2%/bln, angka yang lazim dipakai anjak piutang di Indonesia

@@ -200,8 +200,24 @@ const CONFIG = {
     LIMIT_BARU:         5000000,
     TEMPO_BARU:         0,     // customer baru: COD dulu
 
-    // — sisi margin (Fase 3; window dibatasi _SkuSalesCache, maks RESTOCK.WINDOW_MONTHS) —
-    MARGIN_ENABLED:       false, // ⚠ dibuka HANYA setelah diagVendorPrice() dibaca & waras
+    // — sisi margin (window dibatasi _SkuSalesCache, maks RESTOCK.WINDOW_MONTHS) —
+    // DIBUKA 2026-09-02 setelah diagVendorPrice(): cek ΣlineTotal vs subTotal 10/10 selisih Rp0
+    // (pemetaan totalPrice BENAR), besaran qty×cost vs jual sepadan (tak ada salah satuan PCS/CTN),
+    // costRatio buku 0.8438, SKU tanpa harga beli cuma 0.6% omzet.
+    MARGIN_ENABLED:       true,
+
+    // Item NON-DAGANGAN: bukan barang yang dibeli-lalu-dijual, jadi TIDAK punya harga pokok yang
+    // sebanding. Dikeluarkan dari perhitungan margin (dua sisi: omzet & hpp) supaya tidak
+    // mencemari. Ketahuan dari diag: kode 1/2/100005 = Pembelian Aset, Jasa Pengiriman, Inventaris
+    // Kantor — semuanya cost 0 sehingga tanpa aturan ini akan kena imputasi rasio HPP buku (~84%),
+    // yang jelas salah untuk ongkos kirim. Cocokkan dengan KODE persis atau pola NAMA.
+    NON_INVENTORY_CODES:  ['1', '2', '100005'],
+    NON_INVENTORY_RE:     /pembelian aset|jasa pengiriman|inventaris|biaya kirim|ongkos kirim/i,
+
+    // Ambang "dijual di bawah modal" (rasio hpp/jual). 1.0 = pas modal. Dipakai untuk MENGHITUNG
+    // porsi omzet yang dijual rugi + daftar diagBelowCost(). Diag 2026-09-02 menemukan 167 baris
+    // seperti ini — entah harga beli di Accurate sudah basi, atau harga jualnya memang perlu naik.
+    BELOW_COST_RATIO:     1.0,
     MARGIN_WINDOW_MONTHS: 6,     // di-clamp ke RESTOCK.WINDOW_MONTHS saat runtime (_pruneSkuSales)
     MIN_COVERAGE:         0.70,  // <ini → margin "belum bisa dihitung", vonis dari sisi bayar saja
     MIN_COST_COVERAGE:    0.85,  // share omzet baris yang punya harga beli ASLI (bukan imputasi)
@@ -333,6 +349,7 @@ function onOpen() {
     .addItem('Rebuild Kontak cache (wipe + refetch)', 'rebuildKontakCacheNow')
     .addItem('Refresh Rapor Customer + Turun Buku', 'refreshCustomerNow')
     .addItem('Diag vendorPrice (cek sebelum buka margin)', 'diagVendorPrice')
+    .addItem('Diag jual di bawah modal', 'diagBelowCost')
     .addItem('Diag kontak fields (WA/telp)', 'diagKontakFields')
     .addItem('Diag item fields', 'diagItemFields')
     .addItem('Diag purchase fields', 'diagPurchaseFields')

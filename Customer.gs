@@ -90,6 +90,16 @@ function _monthsBack(today, n) {
   return new Date(today.getFullYear(), today.getMonth() - n, today.getDate());
 }
 
+// Item NON-DAGANGAN (Pembelian Aset / Jasa Pengiriman / Inventaris) — bukan barang beli-jual,
+// jadi tak punya harga pokok yang sebanding. Dikeluarkan dari DUA sisi perhitungan margin.
+// Tanpa ini mereka kena imputasi rasio HPP buku (~84%), yang jelas salah untuk ongkos kirim.
+function _isNonInventory(itemNo, itemName) {
+  const C = CONFIG.CUSTOMER;
+  const code = String(itemNo || '');
+  if ((C.NON_INVENTORY_CODES || []).indexOf(code) >= 0) return true;
+  return C.NON_INVENTORY_RE ? C.NON_INVENTORY_RE.test(String(itemName || '')) : false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GROUPING — satu baris per customer.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -280,7 +290,7 @@ function _custMarginStats(g, ctx) {
   const C = CONFIG.CUSTOMER;
   const out = { ok: false, cakupan: 0, cakupanBiaya: 0, omzetTercakup: 0, lineRevenue: 0,
                 hpp: 0, diskon: 0, marginKotor: 0, marginKotorPct: null, biayaModal: 0,
-                marginBersih: 0, marginBersihPct: null, naikPct: 0 };
+                marginBersih: 0, marginBersihPct: null, naikPct: 0, rugiRp: 0, rugiPct: 0 };
   if (!ctx || !ctx.enabled) return out;
 
   let totWin = 0, totCovered = 0, costKnown = 0, costAll = 0;
@@ -298,20 +308,28 @@ function _custMarginStats(g, ctx) {
     out.diskon += i.cashDiscount || 0;
     (ctx.linesByInv[i.id] || []).forEach(function(L) {
       if (!L.itemNo || !(L.lineTotal > 0)) return;
+      if (_isNonInventory(L.itemNo, L.itemName)) return;   // bukan barang beli-jual
       out.lineRevenue += L.lineTotal;
       costAll += L.lineTotal;
       const m = ctx.items[L.itemNo];
+      let hppLine;
       if (m && m.cost > 0) {
-        out.hpp += L.qty * m.cost;
+        hppLine = L.qty * m.cost;
         costKnown += L.lineTotal;
       } else {
         // Item suspended / belum masuk item master → JANGAN dianggap gratis. Imputasi pakai
         // rasio HPP buku, dan porsinya dilaporkan lewat cakupanBiaya.
-        out.hpp += L.lineTotal * ctx.costRatio;
+        hppLine = L.lineTotal * ctx.costRatio;
       }
+      out.hpp += hppLine;
+      // Dijual di bawah modal. Sengaja TIDAK dikoreksi: kalau harga beli di Accurate basi, itu
+      // masalah data yang harus dibereskan di sumbernya; kalau harganya memang kurang, itu
+      // masalah harga yang harus dinaikkan. Dua-duanya perlu kelihatan, bukan ditambal.
+      if (hppLine / L.lineTotal >= CONFIG.CUSTOMER.BELOW_COST_RATIO) out.rugiRp += L.lineTotal;
     });
   });
   out.cakupanBiaya = costAll > 0 ? costKnown / costAll : 0;
+  out.rugiPct = out.lineRevenue > 0 ? out.rugiRp / out.lineRevenue : 0;
 
   // Biaya modal: dihitung SEJAK FAKTUR TERBIT, bukan sejak telat. Tempo yang kita berikan juga
   // ada harganya — customer yang selalu bayar tepat hari ke-30 tetap memakan modal.
@@ -507,6 +525,7 @@ function buildCustomerReport(invoices, today, yMap) {
         if (!r.itemNo) return;                       // baris sentinel = TIDAK tercakup (konservatif)
         marginCtx.coveredIds[r.invoiceId] = true;
         (marginCtx.linesByInv[r.invoiceId] = marginCtx.linesByInv[r.invoiceId] || []).push(r);
+        if (_isNonInventory(r.itemNo, r.itemName)) return;   // jangan cemari rasio HPP buku
         const m = marginCtx.items[r.itemNo];
         if (m && m.cost > 0 && r.lineTotal > 0) { cKnown += r.qty * m.cost; cAll += r.lineTotal; }
       });
@@ -580,12 +599,17 @@ function buildCustomerReport(invoices, today, yMap) {
                    dinilai: list.filter(function(r) { return r.rank; }).length,
                    jumlah: list.length,
                    perVerdict: {}, cadangan: 0, marginBersih: 0, biayaModal: 0,
-                   tempoCount: 0 };
+                   lineRevenue: 0, rugiRp: 0, tempoCount: 0 };
   list.forEach(function(r) {
     const b = totals.perVerdict[r.verdict] = totals.perVerdict[r.verdict] || { n: 0, rp: 0 };
     b.n++; b.rp += r.outstanding;
     totals.cadangan += r.cadangan;
-    if (r.margin.ok) { totals.marginBersih += r.margin.marginBersih; totals.biayaModal += r.margin.biayaModal; }
+    if (r.margin.ok) {
+      totals.marginBersih += r.margin.marginBersih;
+      totals.biayaModal  += r.margin.biayaModal;
+      totals.lineRevenue += r.margin.lineRevenue;
+      totals.rugiRp      += r.margin.rugiRp;
+    }
     if (!r.isCod && r.tempoModus != null && r.tempoModus > CONFIG.CUSTOMER.COD_TEMPO_MAX) totals.tempoCount++;
   });
 
@@ -659,7 +683,14 @@ function writeCustomerTab(report) {
         ? '⚠ Belum lengkap. Run Full Sync lagi sampai penuh.' : '✓ lengkap']);
     ringkas.push(['Margin bersih buku', t.marginBersih,
       'setelah biaya modal ' + rupiah(t.biayaModal) + ' (' +
-      Math.round(CONFIG.CUSTOMER.COST_OF_CAPITAL_ANNUAL * 100) + '% per tahun)']);
+      Math.round(CONFIG.CUSTOMER.COST_OF_CAPITAL_ANNUAL * 100) + '% per tahun) atas omzet ' +
+      rupiah(t.lineRevenue)]);
+    if (t.rugiRp > 0) {
+      const rp = t.lineRevenue > 0 ? t.rugiRp / t.lineRevenue : 0;
+      ringkas.push(['⚠ Dijual di bawah modal', t.rugiRp,
+        (rp * 100).toFixed(1) + '% dari omzet. Entah harga beli di Accurate sudah basi, ' +
+        'atau harga jualnya memang perlu naik. Jalankan menu Diag jual di bawah modal.']);
+    }
   } else {
     ringkas.push(['Sisi margin', 'BELUM AKTIF',
       'Jalankan menu Diag vendorPrice dulu, baru nyalakan CONFIG.CUSTOMER.MARGIN_ENABLED']);
@@ -964,6 +995,48 @@ function diagCustomerMargin(customerName) {
   });
   Logger.log('TOTAL jual ' + rupiah(sJual) + ' · hpp ' + rupiah(sHpp) + ' · diskon ' + rupiah(sDisk) +
     ' · margin kotor ' + rupiah(sJual - sHpp - sDisk));
+}
+
+// DIAG — daftar SKU yang dijual DI BAWAH MODAL, diurutkan dari nilai terbesar. Temuan diag
+// 2026-09-02: 167 baris seperti ini. Dua kemungkinan dan keduanya perlu tindakan berbeda:
+// (a) vendorPrice di Accurate sudah basi / salah input  → betulkan di master item;
+// (b) harga jualnya memang di bawah modal               → naikkan harga atau lepas SKU-nya.
+// Kolom "beda" = selisih rupiah yang hilang di baris itu.
+function diagBelowCost() {
+  const items = _loadItemCache();
+  const rows = _loadSkuSalesCache();
+  const perSku = {};
+  let totalOmzet = 0, totalRugi = 0, nBaris = 0;
+  rows.forEach(function(r) {
+    if (!r.itemNo || !(r.lineTotal > 0) || !(r.qty > 0)) return;
+    if (_isNonInventory(r.itemNo, r.itemName)) return;
+    const m = items[r.itemNo];
+    if (!m || !(m.cost > 0)) return;
+    const hpp = r.qty * m.cost;
+    totalOmzet += r.lineTotal;
+    if (hpp / r.lineTotal < CONFIG.CUSTOMER.BELOW_COST_RATIO) return;
+    nBaris++;
+    totalRugi += r.lineTotal;
+    const a = perSku[r.itemNo] || (perSku[r.itemNo] = {
+      nama: r.itemName || (m ? m.name : ''), cost: m.cost, n: 0, omzet: 0, hpp: 0, qty: 0 });
+    a.n++; a.omzet += r.lineTotal; a.hpp += hpp; a.qty += r.qty;
+  });
+  Logger.log('=== SKU DIJUAL DI BAWAH MODAL ===');
+  Logger.log(nBaris + ' baris · nilai ' + rupiah(totalRugi) + ' dari omzet ' + rupiah(totalOmzet) +
+    ' (' + (totalOmzet > 0 ? (totalRugi / totalOmzet * 100).toFixed(1) : 0) + '%)');
+  Object.keys(perSku)
+    .map(function(k) { var a = perSku[k]; a.kode = k; a.beda = a.hpp - a.omzet; return a; })
+    .sort(function(a, b) { return b.beda - a.beda; })
+    .forEach(function(a) {
+      Logger.log('  ' + a.kode + ' · ' + a.nama + ' · ' + a.n + ' baris · qty ' + a.qty +
+        ' · jual ' + rupiah(a.omzet) + ' vs modal ' + rupiah(a.hpp) +
+        ' · SELISIH ' + rupiah(a.beda) +
+        ' · harga beli tercatat ' + rupiah(a.cost) + '/CTN' +
+        ' · jual rata2 ' + rupiah(a.qty > 0 ? a.omzet / a.qty : 0) + '/CTN');
+    });
+  Logger.log('Bandingkan "harga beli tercatat" dengan faktur pembelian TERAKHIR. Kalau tidak cocok, ' +
+    'perbaiki vendorPrice di master item Accurate lalu Refresh Restock. Kalau cocok, berarti ' +
+    'harga jual SKU ini memang di bawah modal dan harus dinaikkan.');
 }
 
 // Menu manual: hitung ulang kedua tab tanpa menunggu sync jam 5 pagi.

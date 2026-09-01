@@ -160,6 +160,89 @@ const CONFIG = {
     PO_BUDGET_DEFAULT: 100000000 // fallback budget (Rp) kalau cell, Script Property, & saldo bank semua kosong
   },
 
+  // ── Rapor Customer (Customer.gs) — gate order baru + saran limit & tempo per customer ──
+  // Dua sumbu: (1) SKOR BAYAR 0..100 dari SELURUH riwayat pembayaran, makin tinggi makin baik
+  // (searah skor lain di repo), perilaku lama luruh (half-life); (2) NILAI EKONOMI = margin
+  // kotor (vendorPrice) dikurangi biaya modal piutang.
+  //
+  // Ambang di sini ABSOLUT, bukan percentile seperti RESTOCK. Alasannya beda pertanyaan:
+  // Restock nanya "siapa duluan dengan budget tetap" (ranking murni, tak ada kebenaran luar),
+  // di sini nanya "boleh kirim atau tidak" — dan itu punya jangkar nyata (rupiah, hari, biaya
+  // modal). Kalau SELURUH buku memburuk, percentile tetap mencap AMAN ke 20% teratas dari buku
+  // busuk; justru itu yang sedang dihindari. Percentile cuma dipakai sebagai PRIOR shrinkage.
+  //
+  // Semua keluaran = SARAN. OAuth read-only; Nathan yang menerapkan di Accurate.
+  CUSTOMER: {
+    // — sisi bayar (window: SEMUA faktur yang ditarik sync) —
+    HALF_LIFE_DAYS:     180,   // bobot perilaku separuh tiap 6 bln → customer yang tobat tak dihukum selamanya
+    GRACE_DAYS:         3,     // telat ≤3 hari dianggap tepat waktu (lag admin/bank)
+    LATE_ZERO_DAYS:     45,    // telat ≥45 hari → skor kecepatan 0
+    POSISI_ZERO_DAYS:   60,    // faktur terbuka terlama 60 hari → skor posisi 0
+    BEBAN_GRACE_DAYS:   30,    // eksposur setara ≤1 bulan belanja = wajar
+    BEBAN_ZERO_DAYS:    90,    // eksposur setara ≥3 bulan belanja → skor beban 0
+    BEBAN_HARD_MONTHS:  3,     // >3 bulan belanja tertahan → band dicap RISIKO
+
+    W_KECEPATAN: 0.35, W_DISIPLIN: 0.15, W_POSISI: 0.35, W_BEBAN: 0.15,  // jumlah 1.00
+
+    SHRINK_K:           3,     // data tipis ditarik ke rata-rata buku: bobot sendiri n/(n+K)
+    MIN_INVOICES_SCORE: 3,     // ≥ini baru ikut MEMBENTUK prior buku
+
+    BAND_CUTS: { AMAN: 75, HATI: 60, RISIKO: 40 },   // <RISIKO → BAHAYA
+
+    // Override keras — rata-rata tertimbang TIDAK boleh menutupi keadaan darurat hari ini.
+    STOP_DPD:           45,        // ada faktur terbuka ≥45 hari lewat JT → BAHAYA, apa pun skornya
+    STOP_OVERDUE_RP:    25000000,  // overdue ≥Rp25jt DAN ≥STOP_OVERDUE_DPD hari → BAHAYA
+    STOP_OVERDUE_DPD:   15,
+
+    // — kelas khusus (tidak ikut dirangking / tidak diberi limit) —
+    COD_TEMPO_MAX:      1,     // (dueDate−transDate) ≤1 hari di SEMUA faktur → kelas TUNAI (belum pernah diuji kredit)
+    DORMANT_MONTHS:     6,     // tak ada faktur dalam 6 bln → DORMAN
+    LIMIT_BARU:         5000000,
+    TEMPO_BARU:         0,     // customer baru: COD dulu
+
+    // — sisi margin (Fase 3; window dibatasi _SkuSalesCache, maks RESTOCK.WINDOW_MONTHS) —
+    MARGIN_ENABLED:       false, // ⚠ dibuka HANYA setelah diagVendorPrice() dibaca & waras
+    MARGIN_WINDOW_MONTHS: 6,     // di-clamp ke RESTOCK.WINDOW_MONTHS saat runtime (_pruneSkuSales)
+    MIN_COVERAGE:         0.70,  // <ini → margin "belum bisa dihitung", vonis dari sisi bayar saja
+    MIN_COST_COVERAGE:    0.85,  // share omzet baris yang punya harga beli ASLI (bukan imputasi)
+    MIN_OMZET_RP:         10000000,
+    FALLBACK_COST_RATIO:  0.80,  // dipakai kalau _ItemCache kosong (scope item_view belum grant)
+    TARGET_MARGIN_PCT:    0.12,  // margin bersih sehat setelah biaya modal
+    NAIK_HARGA_MAX:       0.25,  // saran kenaikan harga diplafon 25%
+
+    // Biaya modal piutang. 24%/th = 2%/bln, angka yang lazim dipakai anjak piutang di Indonesia
+    // dan gampang dibela kalau ditanya customer. NB: biaya SEBENARNYA lebih tinggi — restock ROSH
+    // didanai dari AR masuk (cash ~30jt vs saran belanja ~99jt), jadi ongkosnya = margin yang
+    // hilang karena tak bisa belanja, bukan bunga bank. Naikkan ke 0.30–0.36 kalau mau galak.
+    COST_OF_CAPITAL_ANNUAL: 0.24,
+
+    PD: { LANCAR: 0.01, D30: 0.03, D60: 0.08, D90: 0.18, D180: 0.35, D180PLUS: 0.60 },  // cadangan risiko
+
+    // — saran limit & tempo —
+    LIMIT_WINDOW_MONTHS: 6,
+    HEADROOM:   { AMAN: 1.5, HATI: 1.2, RISIKO: 1.0, BAHAYA: 0 },
+    TEMPO_BAND: { AMAN: 30,  HATI: 21,  RISIKO: 14,  BAHAYA: 0 },
+    TEMPO_ONLY_TIGHTEN: true,  // mesin cuma boleh MEMPERKETAT tempo; melonggarkan = keputusan orang
+    TEMPO_MAX:   30,
+    LIMIT_MIN:   2000000,
+    LIMIT_MAX:   150000000,
+    LIMIT_ROUND: 500000,
+    CONC_PCT:    0.10          // satu customer maks 10% total piutang buku (aturan konsentrasi)
+  },
+
+  // ── Program Turun Buku Piutang (TurunBuku.gs) ──
+  // Target: outstanding turun ke TARGET_AR dalam MONTHS bulan, bertahap. Dua tuas: (1) cabut
+  // tempo → COD penuh, (2) tagih lebih keras. NPL_DAYS 60 dipilih karena _MetricSnapshots SUDAH
+  // menyimpan bucket 61–90 & 90+ harian sejak lama → tren NPL bisa ditarik mundur, gratis.
+  TURUN_BUKU: {
+    TARGET_AR:     150000000,   // buku sehat yang dituju (Rp)
+    MONTHS:        6,           // lama program (glide path garis lurus)
+    PROGRAM_START: '2026-09',   // 'yyyy-MM' bulan pertama. Buku awal dikunci dari snapshot bulan ini.
+    NPL_DAYS:      60,          // tagihan lewat >60 hari dianggap NPL (berpotensi tak tertagih)
+    BUDGET_PROP:   'CREDIT_BUDGET',  // Script Property (Rp) override plafon kredit bulan berjalan
+    MIN_WAVE:      3            // gelombang cabut tempo minimal segini customer, biar tidak recehan
+  },
+
   // Sheet tab names (relabeled 2026-05-30; see TAB_MIGRATION for old→new in-place rename)
   TABS: {
     CARA_BACA:     '📖 Cara Baca',          // onboarding guide (static, rebuilt each sync)
@@ -167,6 +250,8 @@ const CONFIG = {
     PESAN:         '✉️ Pesan Penagihan',     // ready-to-send WA collection messages, group-by-customer (Pesan.gs, master-only)
     STOP_SUPPLY:   '⛔ Stop Supply (HOLD)',   // customer lewat jatuh tempo belum bayar → Nathan tahan SO baru (StopSupply.gs; master + file Deden discoped)
     KONTAK:        '📇 Kontak Customer',      // directory semua customer: nama + No WA + No Bisnis (Kontak.gs, master-only)
+    CUSTOMER:      '🧭 Rapor Customer',       // gate order baru + saran limit & tempo per customer (Customer.gs, master-only)
+    TURUN_BUKU:    '📉 Turun Buku Piutang',   // program turun AR ke target + NPL + gelombang cabut tempo (TurunBuku.gs, master-only)
     POOL_A:        '🔴 Pool A — Stuck AR',   // FROZEN legacy AR (handover ≤ onboard, unpaid at onboard)
     POOL_B:        '🔵 Pool B — Ongoing AR', // ongoing AR (handover > onboard)
     RUTE:          '🗺️ Rute Penagihan',      // Ade's field drive list: zona priority + nearest-neighbour route (Route.gs)
@@ -246,6 +331,8 @@ function onOpen() {
     .addItem('Refresh Restock (item + SKU sales)', 'refreshSkuSalesNow')
     .addItem('Refresh Kontak Customer', 'refreshKontakNow')
     .addItem('Rebuild Kontak cache (wipe + refetch)', 'rebuildKontakCacheNow')
+    .addItem('Refresh Rapor Customer + Turun Buku', 'refreshCustomerNow')
+    .addItem('Diag vendorPrice (cek sebelum buka margin)', 'diagVendorPrice')
     .addItem('Diag kontak fields (WA/telp)', 'diagKontakFields')
     .addItem('Diag item fields', 'diagItemFields')
     .addItem('Diag purchase fields', 'diagPurchaseFields')

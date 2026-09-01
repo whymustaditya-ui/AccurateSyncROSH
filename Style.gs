@@ -111,6 +111,8 @@ function writeCaraBacaTab() {
         [CONFIG.TABS.TODO, 'To-do harian: penagihan jatuh tempo (H-1→H+3) & follow-up customer pasif', 'Aksi hari ini'],
         [CONFIG.TABS.PESAN, 'Pesan WA penagihan siap kirim, 1 pesan/pelanggan (gabung faktur H-1→H+14)', 'Copy / tap Kirim WA'],
         [CONFIG.TABS.STOP_SUPPLY, 'Customer lewat jatuh tempo belum bayar — Nathan tahan order baru sampai lunas', 'HOLD order'],
+        [CONFIG.TABS.CUSTOMER, 'Rapor per customer: layak dikasih order baru atau tidak, saran limit kredit & tempo, margin bersih setelah biaya modal', 'Gate order baru'],
+        [CONFIG.TABS.TURUN_BUKU, 'Program menurunkan piutang berjalan ke target: jalur bulanan, NPL, gelombang cabut tempo, siapa ditagih dulu', 'Kemudi bulanan'],
         [CONFIG.TABS.POOL_A, 'Stuck AR — backlog lama, frozen per hari onboard', 'Burn-down ke Rp0'],
         [CONFIG.TABS.POOL_B, 'Ongoing AR — invoice baru yang lewat ke ' + me + ' (H+15)', 'Terus bertambah'],
         [CONFIG.TABS.RUTE, 'Daftar jalan penagihan: piutang terbuka per zona, diurut prioritas + rute terdekat', 'Isi Zona & Pin Maps'],
@@ -220,7 +222,7 @@ function orderTabs() {
   const ss = _ss();
   const order = [
     CONFIG.TABS.CARA_BACA, CONFIG.TABS.SUMMARY, CONFIG.TABS.RESTOCK, CONFIG.TABS.TODO,
-    CONFIG.TABS.PESAN, CONFIG.TABS.STOP_SUPPLY,
+    CONFIG.TABS.PESAN, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.CUSTOMER, CONFIG.TABS.TURUN_BUKU,
     CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.RUTE,
     CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.COLLECTED, CONFIG.TABS.TAGIHAN_LAIN, CONFIG.TABS.KONTAK,
     CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG

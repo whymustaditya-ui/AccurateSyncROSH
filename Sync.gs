@@ -122,6 +122,8 @@ function fullSync() {
     const yA = collectPoolYellow([masterSS, adeSS], CONFIG.TABS.POOL_A);
     const yB = collectPoolYellow([masterSS, adeSS], CONFIG.TABS.POOL_B);
     const yR = collectRouteYellow([masterSS, adeSS], CONFIG.TABS.RUTE); // Zona/Pin/Status/Tgl/Hasil
+    const yCust  = collectCustomerYellow([masterSS]);  // Limit Disetujui / Catatan Nathan
+    const yTurun = collectTurunYellow([masterSS]);     // Status gelombang cabut tempo
 
     // ── MASTER (owner) — every tab ──
     TARGET_SS = null;
@@ -161,6 +163,18 @@ function fullSync() {
     // file) so the Ringkasan's TREN sparkline can read the freshly-stamped snapshot ledger.
     const health = computeBusinessHealth(invoices, ctx, today);
     recordMetricSnapshot(health, today);
+
+    // 🧭 Rapor Customer + 📉 Turun Buku Piutang (master-only). Proyeksi murni: sisi bayar dari
+    // inv.receipts (SEMUA faktur), margin dari _SkuSalesCache × _ItemCache (maks 6 bln, ikut prune
+    // Restock), riwayat buku dari _MetricSnapshots yang baru saja distempel di atas. Nol call
+    // Accurate, nol scope. FAIL-SOFT pola blok Restock/Kontak — tab saran tak boleh meng-abort sync.
+    try {
+      const rapor = buildCustomerReport(invoices, today, yCust);
+      writeCustomerTab(rapor);
+      try { writeTurunBukuTab(buildTurunBuku(rapor, health, today, yTurun)); }
+      catch (e) { Logger.log('Turun Buku dilewati: ' + e.message); }
+    } catch (e) { Logger.log('Rapor Customer dilewati: ' + e.message); }
+
     writeSummaryTab(ctx, 'master', health);
     orderTabs();                             // arrange tabs L→R for the 3 audiences
 

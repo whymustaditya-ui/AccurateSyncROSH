@@ -272,7 +272,7 @@ function writeTurunBukuTab(m) {
     ['Harus turun', m.harusTurun, m.harusTurun > 0
       ? 'Selisih yang harus dibereskan' : '✅ Buku sudah di bawah target'],
     ['Target bulan ini', m.targetBulanIni, 'Ini juga yang jadi plafon kredit di tab Rapor Customer'],
-    ['Customer pegang tempo', m.tempoCount, 'Angka inilah yang harus turun, bukan cuma rupiahnya'],
+    ['Customer pegang tempo', m.tempoCount + ' customer', 'Angka inilah yang harus turun, bukan cuma rupiahnya'],
     ['NPL lewat ' + T.NPL_DAYS + ' hari', nplRp,
       (nplPct * 100).toFixed(1) + '% dari buku · tagihan seumur ini yang biasanya paling sulit cair'],
     ['Cadangan risiko', m.cadangan, 'Perkiraan bagian buku yang berpotensi tidak tertagih']

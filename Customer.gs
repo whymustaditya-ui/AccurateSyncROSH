@@ -667,7 +667,7 @@ function writeCustomerTab(report) {
     ['Terpakai oleh saran limit', t.terpakai, t.sisa >= 0
       ? 'Sisa ' + rupiah(t.sisa) : 'KELEBIHAN ' + rupiah(-t.sisa)],
     ['Piutang berjalan sekarang', t.arBook, 'Total outstanding seluruh customer'],
-    ['Customer pegang tempo', t.tempoCount, 'Ini angka yang harus turun'],
+    ['Customer pegang tempo', t.tempoCount + ' customer', 'Ini angka yang harus turun, bukan cuma rupiahnya'],
     ['Customer dinilai', t.dinilai + ' dari ' + t.jumlah,
       'Sisanya tunai, dorman, atau belum cukup data'],
     ['Cadangan risiko', t.cadangan, 'Perkiraan bagian piutang yang berpotensi tidak tertagih']
@@ -708,6 +708,11 @@ function writeCustomerTab(report) {
   });
   r++;
 
+  // Tiap blok baris data dicatat supaya format angka DAN conditional format kena ke dua-duanya.
+  // Bug 2026-09-02: seksi PERLU AKSI SEKARANG sama sekali tak terformat (rasio tampil sebagai
+  // 0.4881874098, rupiah sebagai 20331182.17) karena format cuma dipasang ke blok terakhir.
+  const blocks = [];
+
   // ── PERLU AKSI SEKARANG ──
   const urgent = report.list.filter(function(x) {
     return x.verdict === '🔴 STOP-COD' || x.verdict === '🟠 NAIKKAN HARGA';
@@ -720,6 +725,7 @@ function writeCustomerTab(report) {
     r++;
   } else {
     uiHeaderRow(sh, r, CUST_HEADERS); r++;
+    blocks.push({ first: r, n: urgent.length });
     r = _custWriteRows(sh, r, urgent);
   }
   r++;
@@ -729,8 +735,8 @@ function writeCustomerTab(report) {
   const hrow = r;
   uiHeaderRow(sh, r, CUST_HEADERS); r++;
   const first = r;
+  blocks.push({ first: r, n: report.list.length });
   r = _custWriteRows(sh, r, report.list);
-  const nRows = r - first;
 
   // pita TOTAL
   const totOut = report.list.reduce(function(s, x) { return s + x.outstanding; }, 0);
@@ -741,7 +747,9 @@ function writeCustomerTab(report) {
   sh.getRange(r, 21).setValue(totJatah).setNumberFormat('"Rp"#,##0');
   const totRow = r; r++;
 
-  _custFormats(sh, first, nRows);
+  // WAJIB sekali untuk semua blok: setConditionalFormatRules mengganti SELURUH aturan sheet,
+  // jadi memanggilnya per blok akan menghapus aturan blok sebelumnya.
+  _custCondFormats(sh, blocks);
   sh.setFrozenRows(hrow);
   sh.setFrozenColumns(1);
 
@@ -791,56 +799,65 @@ function _custWriteRows(sh, row, rows) {
   sh.getRange(row, 1, matrix.length, CUST_SPAN).setValues(matrix).setVerticalAlignment('middle');
   sh.getRange(row, 1, matrix.length, CUST_SPAN)
     .setBorder(true, true, true, true, true, true, UI.BORDER, SpreadsheetApp.BorderStyle.SOLID);
+  _custNumberFormats(sh, row, matrix.length);
   return row + matrix.length;
 }
 
-function _custFormats(sh, first, n) {
+// Format angka SATU blok baris. Dipanggil dari _custWriteRows sehingga berlaku untuk setiap
+// seksi yang menulis baris customer, bukan cuma yang terakhir.
+function _custNumberFormats(sh, first, n) {
   if (n <= 0) return;
-  [9, 11, 13, 14, 16, 17, 19, 20, 21, 25].forEach(function(c) {
-    sh.getRange(first, c, n, 1).setNumberFormat('"Rp"#,##0');
+  [9, 11, 13, 14, 16, 17, 19, 20, 21, 25].forEach(function(c) {      // rupiah, tanpa desimal
+    sh.getRange(first, c, n, 1).setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
   });
-  [8, 12, 15, 18, 23].forEach(function(c) {
+  [8, 12, 15, 18, 23].forEach(function(c) {                          // persen, 1 desimal
     sh.getRange(first, c, n, 1).setNumberFormat('0.0%').setHorizontalAlignment('center');
   });
-  [5, 7, 10, 22].forEach(function(c) {
+  [5, 7, 10, 22].forEach(function(c) {                               // bilangan bulat
     sh.getRange(first, c, n, 1).setNumberFormat('#,##0').setHorizontalAlignment('center');
   });
-  sh.getRange(first, 24, n, 1).setWrap(true);
-  sh.getRange(first, 26, n, 1).setWrap(true);
-  // kolom 🟡 milik Nathan
+  sh.getRange(first, 1, n, 4).setHorizontalAlignment('left');
+  sh.getRange(first, 6, n, 1).setHorizontalAlignment('center');
+  sh.getRange(first, 24, n, 1).setWrap(true).setVerticalAlignment('top');
+  sh.getRange(first, 26, n, 1).setWrap(true).setVerticalAlignment('top');
   sh.getRange(first, CUST_COL_YEL1, n, 2).setBackground(UI.AMBER_BODY);
+}
 
-  const kep = sh.getRange(first, 4, n, 1);
-  const skor = sh.getRange(first, 5, n, 1);
-  const telat = sh.getRange(first, 10, n, 1);
-  const cak = sh.getRange(first, 12, n, 1);
-  const mb = sh.getRange(first, 17, n, 1);
-  const naik = sh.getRange(first, 23, n, 1);
-  const tier = sh.getRange(first, 3, n, 1);
+// Conditional format untuk SEMUA blok sekaligus (lihat catatan di writeCustomerTab).
+function _custCondFormats(sh, blocks) {
+  const use = (blocks || []).filter(function(b) { return b && b.n > 0; });
+  if (!use.length) return;
+  const rng = function(col) {
+    return use.map(function(b) { return sh.getRange(b.first, col, b.n, 1); });
+  };
+  const kep = rng(4), skor = rng(5), telat = rng(10), cak = rng(12);
+  const mb = rng(17), mbPct = rng(18), naik = rng(23), tier = rng(3);
+  const B = CONFIG.CUSTOMER.BAND_CUTS;
   const R = SpreadsheetApp.newConditionalFormatRule;
   sh.setConditionalFormatRules([
-    R().whenTextStartsWith('🔴').setBackground(UI.T_RED).setRanges([kep]).build(),
-    R().whenTextStartsWith('🟠').setBackground('#fed7aa').setRanges([kep]).build(),
-    R().whenTextStartsWith('🟡').setBackground(UI.T_AMBER).setRanges([kep]).build(),
-    R().whenTextStartsWith('🟢').setBackground(UI.T_GREEN).setRanges([kep]).build(),
-    R().whenTextStartsWith('💵').setBackground(UI.BLUE_SOFT).setRanges([kep]).build(),
-    R().whenTextStartsWith('🆕').setBackground(UI.BLUE_SOFT).setRanges([kep]).build(),
-    R().whenTextStartsWith('⚪').setBackground(UI.T_GREY).setRanges([kep]).build(),
-    R().whenTextStartsWith('😴').setBackground(UI.T_GREY).setRanges([kep]).build(),
-    R().whenNumberGreaterThanOrEqualTo(CONFIG.CUSTOMER.BAND_CUTS.AMAN).setBackground(UI.T_GREEN).setRanges([skor]).build(),
-    R().whenNumberBetween(CONFIG.CUSTOMER.BAND_CUTS.HATI, CONFIG.CUSTOMER.BAND_CUTS.AMAN - 1).setBackground(UI.T_AMBER).setRanges([skor]).build(),
-    R().whenNumberBetween(CONFIG.CUSTOMER.BAND_CUTS.RISIKO, CONFIG.CUSTOMER.BAND_CUTS.HATI - 1).setBackground('#fed7aa').setRanges([skor]).build(),
-    R().whenNumberLessThan(CONFIG.CUSTOMER.BAND_CUTS.RISIKO).setBackground(UI.T_RED).setRanges([skor]).build(),
-    R().whenNumberGreaterThanOrEqualTo(CONFIG.CUSTOMER.STOP_DPD).setBackground(UI.T_RED).setRanges([telat]).build(),
-    R().whenNumberBetween(15, CONFIG.CUSTOMER.STOP_DPD - 1).setBackground('#fed7aa').setRanges([telat]).build(),
-    R().whenNumberBetween(1, 14).setBackground(UI.T_AMBER).setRanges([telat]).build(),
-    R().whenNumberLessThan(CONFIG.CUSTOMER.MIN_COVERAGE).setBackground(UI.T_AMBER).setRanges([cak]).build(),
-    R().whenNumberLessThan(0).setBackground(UI.T_RED).setRanges([mb]).build(),
-    R().whenNumberGreaterThan(0).setBackground('#fed7aa').setRanges([naik]).build(),
-    R().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges([tier]).build(),
-    R().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges([tier]).build(),
-    R().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges([tier]).build(),
-    R().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges([tier]).build()
+    R().whenTextStartsWith('🔴').setBackground(UI.T_RED).setRanges(kep).build(),
+    R().whenTextStartsWith('🟠').setBackground('#fed7aa').setRanges(kep).build(),
+    R().whenTextStartsWith('🟡').setBackground(UI.T_AMBER).setRanges(kep).build(),
+    R().whenTextStartsWith('🟢').setBackground(UI.T_GREEN).setRanges(kep).build(),
+    R().whenTextStartsWith('💵').setBackground(UI.BLUE_SOFT).setRanges(kep).build(),
+    R().whenTextStartsWith('🆕').setBackground(UI.BLUE_SOFT).setRanges(kep).build(),
+    R().whenTextStartsWith('⚪').setBackground(UI.T_GREY).setRanges(kep).build(),
+    R().whenTextStartsWith('😴').setBackground(UI.T_GREY).setRanges(kep).build(),
+    R().whenNumberGreaterThanOrEqualTo(B.AMAN).setBackground(UI.T_GREEN).setRanges(skor).build(),
+    R().whenNumberBetween(B.HATI, B.AMAN - 1).setBackground(UI.T_AMBER).setRanges(skor).build(),
+    R().whenNumberBetween(B.RISIKO, B.HATI - 1).setBackground('#fed7aa').setRanges(skor).build(),
+    R().whenNumberLessThan(B.RISIKO).setBackground(UI.T_RED).setRanges(skor).build(),
+    R().whenNumberGreaterThanOrEqualTo(CONFIG.CUSTOMER.STOP_DPD).setBackground(UI.T_RED).setRanges(telat).build(),
+    R().whenNumberBetween(15, CONFIG.CUSTOMER.STOP_DPD - 1).setBackground('#fed7aa').setRanges(telat).build(),
+    R().whenNumberBetween(1, 14).setBackground(UI.T_AMBER).setRanges(telat).build(),
+    R().whenNumberLessThan(CONFIG.CUSTOMER.MIN_COVERAGE).setBackground(UI.T_AMBER).setRanges(cak).build(),
+    R().whenNumberLessThan(0).setBackground(UI.T_RED).setRanges(mb).build(),
+    R().whenNumberLessThan(CONFIG.CUSTOMER.TARGET_MARGIN_PCT).setBackground(UI.T_AMBER).setRanges(mbPct).build(),
+    R().whenNumberGreaterThan(0).setBackground('#fed7aa').setRanges(naik).build(),
+    R().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges(tier).build(),
+    R().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges(tier).build(),
+    R().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges(tier).build(),
+    R().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges(tier).build()
   ]);
 }
 

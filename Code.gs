@@ -288,28 +288,34 @@ const CONFIG = {
     TEMPO_BAND: { AMAN: 14, HATI: 14, RISIKO: 0, BAHAYA: 0 },
     TEMPO_ONLY_TIGHTEN: true,  // mesin cuma boleh MEMPERKETAT tempo; melonggarkan = keputusan orang
     TEMPO_MAX:   14,
-    // Limit = belanja bulanan × pengali band, lalu diplafon per band. Sebelum 2026-09-05 rumusnya
-    // belanja × tempo/30 × headroom; dengan tempo 14 rumus lama diam-diam membagi dua semua limit,
-    // jadi diganti ke bentuk SOP yang eksplisit.
-    LIMIT_MULT: { AMAN: 1.5, HATI: 1.0, RISIKO: 0, BAHAYA: 0 },
-    LIMIT_CAP:  { HATI: 10000000 },   // T1 maks Rp10jt (SOP). AMAN tanpa plafon khusus: LIMIT_MAX + CONC_PCT tetap berlaku
+    // Limit = LIMIT_ORDER_MULT × MEDIAN nilai order (window LIMIT_WINDOW_MONTHS), dibulatkan
+    // LIMIT_ROUND, lantai LIMIT_MIN, plafon LIMIT_CAP. Dipilih 2026-09-05 (Bro):
+    //   • dasar per-ORDER, bukan belanja bulanan: dengan tempo 14, eksposur alami customer = berapa
+    //     faktur yang terbuka bersamaan, bukan omzet sebulan. Rumus bulanan terlalu longgar untuk
+    //     customer yang order sebulan sekali.
+    //   • MEDIAN, bukan rata-rata: satu order besar sekali lewat tidak boleh membuka limit permanen.
+    //   • ×2: customer mingguan punya 2 faktur terbuka dalam satu siklus tempo 14; ×1 berarti order
+    //     kedua selalu tertahan dan tempo tak pernah benar-benar terpakai.
+    //   • cap Rp10jt: di atas itu hanya lewat kolom Limit Disetujui (T2 di SOP, wewenang owner).
+    // Total limit vs target buku (TURUN_BUKU.TARGET_AR) dijaga lewat SATU baris RINGKAS, bukan
+    // alokasi plafon per customer (dicabut 2026-09-05: bikin baris "🟢 tapi bayar dulu, plafon
+    // habis" yang membingungkan). Kalau Σ limit lewat target, turunkan LIMIT_ORDER_MULT ke 1.5.
+    LIMIT_ORDER_MULT: 2,
     LIMIT_MIN:   2000000,
-    LIMIT_MAX:   150000000,
-    LIMIT_ROUND: 500000,
-    CONC_PCT:    0.10          // satu customer maks 10% total piutang buku (aturan konsentrasi)
+    LIMIT_CAP:   10000000,
+    LIMIT_ROUND: 500000
   },
 
   // ── Program Turun Buku Piutang (TurunBuku.gs) ──
-  // Target: outstanding turun ke TARGET_AR dalam MONTHS bulan, bertahap. Dua tuas: (1) cabut
-  // tempo → COD penuh, (2) tagih lebih keras. NPL_DAYS 60 dipilih karena _MetricSnapshots SUDAH
-  // menyimpan bucket 61–90 & 90+ harian sejak lama → tren NPL bisa ditarik mundur, gratis.
+  // Target: outstanding turun ke TARGET_AR dalam MONTHS bulan, bertahap. Tab-nya = jalur bulanan
+  // + daftar KONVERSI customer lama ke tempo 14 (segmen Hijau/Kuning/Merah, Panduan Sales bagian 9).
+  // NPL_DAYS 60 dipilih karena _MetricSnapshots SUDAH menyimpan bucket 61–90 & 90+ harian sejak
+  // lama → tren NPL bisa ditarik mundur, gratis. TARGET_AR juga jadi pagar Σ limit kredit (Rapor).
   TURUN_BUKU: {
     TARGET_AR:     150000000,   // buku sehat yang dituju (Rp)
     MONTHS:        6,           // lama program (glide path garis lurus)
     PROGRAM_START: '2026-09',   // 'yyyy-MM' bulan pertama. Buku awal dikunci dari snapshot bulan ini.
-    NPL_DAYS:      60,          // tagihan lewat >60 hari dianggap NPL (berpotensi tak tertagih)
-    BUDGET_PROP:   'CREDIT_BUDGET',  // Script Property (Rp) override plafon kredit bulan berjalan
-    MIN_WAVE:      3            // gelombang cabut tempo minimal segini customer, biar tidak recehan
+    NPL_DAYS:      60           // tagihan lewat >60 hari dianggap NPL (berpotensi tak tertagih)
   },
 
   // Sheet tab names (relabeled 2026-05-30; see TAB_MIGRATION for old→new in-place rename)

@@ -15,9 +15,8 @@
  *             Identik dengan keanggotaan ⛔ Stop Supply, sengaja: dua tab tak boleh beda vonis.
  *   ✅ YA     selain itu. Cara bayar: TEMPO kalau punya tempo & limit berlaku > 0, else BAYAR DULU.
  *
- * Limit berlaku = Limit Disetujui Nathan kalau diisi, kalau tidak Jatah Plafon bulan ini
- * (_limitBerlaku, StopSupply.gs). Jatah ikut plafon program Turun Buku, jadi bisa MENGECIL tiap
- * bulan; RINGKAS menyebut plafon bulan ini terus terang.
+ * Limit berlaku = Limit Disetujui Nathan kalau diisi, kalau tidak Saran Limit mesin
+ * (_limitBerlaku, StopSupply.gs): LIMIT_ORDER_MULT × median nilai order, cap LIMIT_CAP.
  *
  * Proyeksi murni: nol call Accurate, nol scope. Depends: Sync.gs (_ss, _bySalesman, num),
  * Style.gs (UI), Kpi.gs (rupiah), Restock.gs (_mblock), StopSupply.gs (_limitBerlaku,
@@ -40,7 +39,7 @@ function _statusHeaders(role) {
 // ─────────────────────────────────────────────────────────────────────────────
 function buildCustomerStatus(rapor) {
   const rows = [];
-  if (!rapor || !rapor.list) return { rows: rows, budget: 0, budgetSrc: '' };
+  if (!rapor || !rapor.list) return { rows: rows };
   const DPD = CONFIG.STOP_SUPPLY_DAYS;
   const tempoMax = CONFIG.CUSTOMER.TEMPO_MAX;
 
@@ -84,7 +83,7 @@ function buildCustomerStatus(rapor) {
       belanjaBulanan: r.belanjaBulanan || 0
     });
   });
-  return { rows: rows, budget: rapor.totals.budget, budgetSrc: rapor.totals.budgetSrc };
+  return { rows: rows };
 }
 
 // Kenapa YA tapi bayar dulu. Urutan: sebab yang paling spesifik dulu.
@@ -96,7 +95,6 @@ function _statusCodReason(r, limit, tempo) {
   if (v.indexOf('⚪') === 0) return 'Belum cukup riwayat bayar untuk dinilai. Bayar dulu.';
   if (v.indexOf('🔴') === 0) return 'Catatan bayar buruk (skor ' + r.skor + '). Boleh order hanya dengan bayar di muka.';
   if (tempo <= 0) return 'Catatan bayar kurang rapi (skor ' + r.skor + '). Bayar dulu sampai catatannya membaik.';
-  if (limit <= 0 && r.limit > 0) return 'Plafon kredit ROSH bulan ini sudah terbagi habis. Bulan ini bayar dulu; tempo dilanjutkan begitu plafon tersedia.';
   return 'Belum ada limit kredit. Bayar dulu.';
 }
 
@@ -207,9 +205,8 @@ function writeCustomerStatusTab(status, role) {
   r = uiFootnote(sh, r, SPAN,
     '◆ Boleh Supply? TIDAK kalau ada faktur lewat jatuh tempo (≥ H+' + CONFIG.STOP_SUPPLY_DAYS +
     ') atau nunggak melewati Limit; daftarnya sama persis dengan tab Stop Supply. ' +
-    'Limit = limit yang disetujui owner, kalau belum ada memakai jatah plafon kredit bulan ini' +
-    (isDeden ? '' : ' (' + rupiah(status.budget) + ', ' + status.budgetSrc + ')') +
-    '; plafon mengikuti program penurunan piutang jadi bisa mengecil tiap bulan. ' +
+    'Limit = limit yang disetujui owner, kalau belum ada memakai ' + CONFIG.CUSTOMER.LIMIT_ORDER_MULT +
+    ' kali nilai order rata-rata customer itu, maksimal ' + rupiah(CONFIG.CUSTOMER.LIMIT_CAP) + '. ' +
     'Sisa Limit = Limit dikurangi Nunggak Sekarang; order di atas Sisa Limit, kelebihannya bayar dulu. ' +
     'Semua customer kredit tempo ' + tempoMax + ' hari; faktur lama yang sudah terbit tetap ikut tempo lamanya sampai lunas. ' +
     'Loyalitas (A/B/C/D) = seberapa sering dia order, bukan izin kredit.');
@@ -254,7 +251,7 @@ function _statusCaraBaca(sh, row, SPAN, isDeden) {
     ['Boleh Supply?', '⛔ TIDAK = ada faktur lewat jatuh tempo atau nunggak melewati limit. Jangan buat SO, berapa pun nilai ordernya. Tagih dulu; begitu sisa Rp0 status otomatis kembali YA di sync berikutnya. ✅ YA = boleh order, lihat Cara Bayar.'],
     ['Cara Bayar', '🧾 TEMPO ' + CONFIG.CUSTOMER.TEMPO_MAX + ' HARI = boleh kirim dulu, bayar paling lambat ' + CONFIG.CUSTOMER.TEMPO_MAX + ' hari, sampai angka Sisa Limit. 💵 BAYAR DULU = boleh order tapi transfer harus masuk sebelum barang naik mobil (customer baru, tunai, catatan bayar kurang, atau plafon bulan ini habis). Alasannya ada di Keterangan.'],
     ['Sisa Limit', 'Limit dikurangi Nunggak Sekarang. Order lebih dari ini boleh, tapi kelebihannya bayar dulu. Nol untuk customer bayar dulu.'],
-    ['Limit', 'Limit kredit yang berlaku: angka yang disetujui owner, atau kalau belum ada, jatah plafon kredit bulan ini. Naik hanya lewat owner setelah 3 bulan tanpa telat; sales boleh mengingatkan.'],
+    ['Limit', 'Limit kredit yang berlaku: angka yang disetujui owner, atau kalau belum ada, ' + CONFIG.CUSTOMER.LIMIT_ORDER_MULT + ' kali nilai order rata-rata customer itu (maksimal ' + rupiah(CONFIG.CUSTOMER.LIMIT_CAP) + '). Kalimatnya ke customer: "dua kali order rata-rata Bapak". Naik di atas itu hanya lewat owner setelah 3 bulan tanpa telat; sales boleh mengingatkan.'],
     ['Hari Telat', 'Faktur terbuka paling lama, dihitung dari jatuh tempo. Makin besar makin prioritas ditagih. Kosong = tidak ada yang lewat jatuh tempo.'],
     ['Cicilan', 'Tidak membuka kiriman. Faktur dianggap lunas hanya kalau sisa Rp0. Transfer kurang (motong sendiri) = belum lunas.'],
     ['Tempo', 'Semua customer kredit ' + CONFIG.CUSTOMER.TEMPO_MAX + ' hari. Tidak ada tempo 21 atau 30. Kalau customer minta lebih: "Sistem kami ' + CONFIG.CUSTOMER.TEMPO_MAX + ' hari untuk semua; yang bisa naik itu limitnya, kalau pembayarannya lancar."'],

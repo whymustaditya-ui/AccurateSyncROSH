@@ -248,7 +248,7 @@ function fullSync() {
       if (custStatus) {
         try {
           writeCustomerStatusTab(
-            { rows: _bySalesman(custStatus.rows, CONFIG.SALES_NAME), budget: custStatus.budget, budgetSrc: custStatus.budgetSrc },
+            { rows: _bySalesman(custStatus.rows, CONFIG.SALES_NAME) },
             'deden');
         } catch (e) { Logger.log('Status Customer (Deden) dilewati: ' + e.message); }
       }

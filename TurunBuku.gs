@@ -101,18 +101,6 @@ function _glidePath(startAr, today) {
   return { base: base, rows: rows, startKey: startKey };
 }
 
-// Target buku untuk bulan berjalan — dipakai Customer.gs sebagai plafon kredit bulan ini,
-// sehingga pengetatan ikut mengencang otomatis tiap bulan tanpa ada yang perlu mengubah angka.
-function _glideTargetFor(today, arNow) {
-  try {
-    const g = _glidePath(arNow, today);
-    const idx = _tbMonthIndex(g.startKey, _tbMonthKey(today));
-    if (idx < 0) return null;                                   // program belum mulai
-    const row = g.rows[Math.min(idx, g.rows.length - 1)];
-    return row ? row.target : null;
-  } catch (e) { Logger.log('_glideTargetFor: ' + e.message); return null; }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // GELOMBANG CABUT TEMPO — customer paling tidak layak pegang tempo duluan, dipecah jadi
 // gelombang bulanan yang masing-masing membebaskan cukup rupiah untuk mengejar target bulan itu.
@@ -271,7 +259,7 @@ function writeTurunBukuTab(m) {
     ['Target akhir program', T.TARGET_AR, 'Dicapai bertahap dalam ' + T.MONTHS + ' bulan'],
     ['Harus turun', m.harusTurun, m.harusTurun > 0
       ? 'Selisih yang harus dibereskan' : '✅ Buku sudah di bawah target'],
-    ['Target bulan ini', m.targetBulanIni, 'Ini juga yang jadi plafon kredit di tab Rapor Customer'],
+    ['Target bulan ini', m.targetBulanIni, 'Titik jalur bulan berjalan'],
     ['Customer pegang tempo', m.tempoCount + ' customer', 'Angka inilah yang harus turun, bukan cuma rupiahnya'],
     ['NPL lewat ' + T.NPL_DAYS + ' hari', nplRp,
       (nplPct * 100).toFixed(1) + '% dari buku · tagihan seumur ini yang biasanya paling sulit cair'],

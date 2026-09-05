@@ -11,7 +11,7 @@
  * Kode yang bisa dihitung otomatis dari data Accurate:
  *   OVD  ada faktur lewat jatuh tempo dengan sisa > Rp0
  *   LIM  outstanding melewati limit kredit (limit dari Rapor Customer: Limit Disetujui Nathan
- *        kalau diisi, kalau tidak Jatah Plafon bulan ini)
+ *        kalau diisi, kalau tidak Saran Limit mesin)
  * Kode lain di SOP (SKK, COD, HP, GIRO, LOST, BL) butuh input manusia dan belum ada sumbernya
  * di sheet; kalau nanti dibutuhkan, tambahkan sebagai kolom 🟡 di Rapor Customer, bukan di sini.
  *
@@ -42,9 +42,9 @@ function _stopSupplyStep(dpd) {
   return out;
 }
 
-// Limit yang BERLAKU untuk satu customer menurut Rapor Customer: ketikan Nathan menang, kalau
-// kosong pakai Jatah Plafon bulan ini. Dipakai bersama oleh Stop Supply (kode LIM) dan Status
-// Customer (Sisa Limit) supaya dua tab tidak pernah menyebut angka limit yang berbeda.
+// Limit yang BERLAKU untuk satu customer menurut Rapor Customer: ketikan Nathan (Limit Disetujui)
+// menang, kalau kosong pakai Saran Limit mesin. Dipakai bersama oleh Stop Supply (kode LIM),
+// Status Customer (Sisa Limit), dan RINGKAS Rapor (Σ limit) supaya tidak ada dua angka limit.
 function _limitBerlaku(r) {
   if (!r) return 0;
   // Kolom kuning bisa berisi angka ATAU teks "Rp10.000.000" (num() = parseFloat → 0 untuk teks
@@ -54,7 +54,7 @@ function _limitBerlaku(r) {
   if (typeof v === 'number') manual = v;
   else if (v != null && v !== '') { const d = String(v).replace(/[^0-9]/g, ''); manual = d ? Number(d) : 0; }
   if (manual > 0) return manual;
-  return r.jatah > 0 ? r.jatah : 0;
+  return r.limit > 0 ? r.limit : 0;
 }
 
 // Peta nama customer → baris Rapor Customer. rapor boleh null (Rapor gagal/di-skip).
@@ -211,7 +211,7 @@ function writeStopSupplyTab(list) {
   uiFootnote(sh, totRow + 1, SPAN,
     '◆ Alasan: OVD = ada faktur lewat jatuh tempo (sisa > Rp0) · LIM = outstanding melewati Limit Berlaku. ' +
     'Sejak = hari pertama masuk HOLD (jatuh tempo faktur tertua + ' + CONFIG.STOP_SUPPLY_DAYS + '); kosong untuk LIM saja. ' +
-    'Limit Berlaku = Limit Disetujui di Rapor Customer kalau diisi, kalau tidak Jatah Plafon bulan ini. ' +
+    'Limit Berlaku = Limit Disetujui di Rapor Customer kalau diisi, kalau tidak Saran Limit mesin. ' +
     'Tindakan Berikutnya mengikuti jadwal tagih Panduan Sales (H+1 / H+3 / H+7 / H+14 / H+30). ' +
     'Keluar dari daftar otomatis begitu sisa Rp0 (OVD) atau outstanding turun di bawah limit (LIM). ' +
     'Kode SKK / COD / HP / GIRO / LOST / BL dari SOP belum otomatis; catat di kolom Catatan Nathan (Rapor Customer).');

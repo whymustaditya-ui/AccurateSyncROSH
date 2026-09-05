@@ -17,23 +17,28 @@
  * Restock. Semua keluaran = SARAN; OAuth read-only, Nathan yang menerapkan di Accurate.
  *
  * MASTER-ONLY. Tab ini membawa margin turunan vendorPrice — jangan pernah ditambahkan ke blok
- * writer Ade atau Deden, dan jangan masuk TABS_DEDEN.
+ * writer Ade atau Deden, dan jangan masuk TABS_DEDEN. Sisi bayar + limit-nya diproyeksikan ke
+ * 🚦 Status Customer (Status.gs) untuk sales, tanpa margin.
  *
  * Depends: Sync.gs (_custKey, num, stripTime, DAY_MS, parseAccDate), Kpi.gs (rupiah, clamp),
  * Style.gs (UI helpers), Restock.gs (_loadSkuSalesCache, _loadItemCache, _mblock).
  */
 
+// 17 kolom sejak 2026-09-05 (dulu 26). Yang dibuang: Risiko (sudah tersirat warna Skor), Lewat H+15,
+// Cakupan Data, Omzet Tercakup, Margin Kotor Rp, Biaya Modal, Margin Bersih Rp, Potensi Gagal Bayar
+// (angka buku ada di Turun Buku), Jatah Plafon (alokasi plafon dicabut), Saran Tempo (selalu 14/0).
+// Aturan: satu kolom = satu keputusan yang bisa diambil dari membacanya. Angka antara → RINGKAS/diag.
 var CUST_HEADERS = [
-  'Customer', 'Sales', 'Loyalitas (4bln)', 'Keputusan', 'Skor Bayar', 'Risiko',
-  'Rata2 Telat (hari)', 'Lewat H+15', 'Nunggak Sekarang', 'Telat Terlama (hari)',
-  'Belanja / bln', 'Cakupan Data', 'Omzet Tercakup', 'Margin Kotor', 'Margin Kotor %',
-  'Biaya Modal', 'Margin Bersih', 'Margin Bersih %', 'Potensi Gagal Bayar',
-  'Saran Limit', 'Jatah Plafon', 'Saran Tempo (hari)', 'Saran Naik Harga', 'Alasan',
+  'Customer', 'Sales', 'Loyalitas (4bln)', 'Keputusan', 'Skor Bayar', 'Rata2 Telat (hari)',
+  'Nunggak Sekarang', 'Telat Terlama (hari)', 'Belanja / bln', 'Order Rata2 (median)',
+  'Margin Kotor %', 'Margin Bersih %', 'Saran Naik Harga', 'Saran Limit', 'Alasan',
   'Limit Disetujui', 'Catatan Nathan'
 ];
-var CUST_SPAN     = CUST_HEADERS.length;   // 26
-var CUST_COL_YEL1 = 25;                    // 🟡 Limit Disetujui
-var CUST_COL_YEL2 = 26;                    // 🟡 Catatan Nathan
+var CUST_SPAN     = CUST_HEADERS.length;   // 17
+var CUST_COL      = {};                    // nama header → nomor kolom (1-based)
+CUST_HEADERS.forEach(function(h, i) { CUST_COL[h] = i + 1; });
+var CUST_COL_YEL1 = CUST_COL['Limit Disetujui'];
+var CUST_COL_YEL2 = CUST_COL['Catatan Nathan'];
 var CUST_NO_MARGIN = 'belum bisa dihitung';
 
 // Urutan tampil: yang paling butuh keputusan di atas.
@@ -146,6 +151,7 @@ function _custPaymentStats(g, today) {
   let outstanding = 0, overdueRp = 0, maxOpenDpd = null, cadangan = 0;
   let lastTrans = null, belanjaWin = 0, invCount = 0;
   let allCod = true, hasTempoInfo = false;
+  const orderVals = [];                                     // nilai tiap faktur di window → median
 
   const winStart = _monthsBack(today, C.LIMIT_WINDOW_MONTHS);
 
@@ -153,7 +159,7 @@ function _custPaymentStats(g, today) {
     invCount++;
     if (i.transDate) {
       if (!lastTrans || i.transDate > lastTrans) lastTrans = i.transDate;
-      if (i.transDate >= winStart) belanjaWin += i.total;
+      if (i.transDate >= winStart) { belanjaWin += i.total; if (i.total > 0) orderVals.push(i.total); }
     }
     // Deteksi kelas TUNAI: SEMUA faktur bertempo ≤ COD_TEMPO_MAX hari.
     if (i.dueDate && i.transDate) {
@@ -212,6 +218,11 @@ function _custPaymentStats(g, today) {
   });
 
   const belanjaBulanan = belanjaWin / C.LIMIT_WINDOW_MONTHS;
+  // Median nilai order: dasar Saran Limit. Tahan terhadap satu order besar sekali lewat.
+  orderVals.sort(function(a, b) { return a - b; });
+  const nOrd = orderVals.length;
+  const medianOrder = nOrd === 0 ? 0
+    : (nOrd % 2 ? orderVals[(nOrd - 1) / 2] : (orderVals[nOrd / 2 - 1] + orderVals[nOrd / 2]) / 2);
   const bulanTertahan  = belanjaBulanan > 0 ? outstanding / belanjaBulanan : (outstanding > 0 ? 99 : 0);
   const overdueShare   = outstanding > 0 ? overdueRp / outstanding : 0;
 
@@ -231,7 +242,8 @@ function _custPaymentStats(g, today) {
     wadl: pSum > 0 ? pLateDays / pSum : null,          // rata2 telat SAAT BAYAR (tampilan)
     shareH15: wSum > 0 ? wH15 / wSum : null,
     outstanding: outstanding, overdueRp: overdueRp, maxOpenDpd: maxOpenDpd,
-    cadangan: cadangan, belanjaBulanan: belanjaBulanan, bulanTertahan: bulanTertahan,
+    cadangan: cadangan, belanjaBulanan: belanjaBulanan, medianOrder: medianOrder,
+    nOrder: nOrd, bulanTertahan: bulanTertahan,
     tempoModus: _custTempoModus(invs),
     isCod: hasTempoInfo && allCod,
     isDormant: !lastTrans || lastTrans < dormantCut,
@@ -409,7 +421,7 @@ function _custMarginStats(g, ctx) {
 // ─────────────────────────────────────────────────────────────────────────────
 // VONIS + SARAN LIMIT & TEMPO
 // ─────────────────────────────────────────────────────────────────────────────
-function _custVerdict(p, m, sc, arBook) {
+function _custVerdict(p, m, sc) {
   const C = CONFIG.CUSTOMER;
 
   // Kelas khusus dulu — tapi customer yang SUDAH overdue tidak boleh lolos ke "belum dinilai".
@@ -442,15 +454,11 @@ function _custVerdict(p, m, sc, arBook) {
   if (C.TEMPO_ONLY_TIGHTEN && p.tempoModus != null) tempo = Math.min(tempo, p.tempoModus);
   tempo = clamp(tempo, 0, C.TEMPO_MAX);
 
-  // Limit = belanja sebulan × pengali band (SOP tabel Tiering: T1 1x, T2 1,5x), diplafon per band.
-  // Kalimat yang bisa diucapkan ke customer: "kira-kira satu bulan belanja".
-  // Band tanpa tempo (RISIKO/BAHAYA) otomatis limit 0: bayar dulu.
-  let limit = tempo > 0 ? p.belanjaBulanan * (C.LIMIT_MULT[sc.band] || 0) : 0;
+  // Limit = LIMIT_ORDER_MULT × median nilai order, lantai LIMIT_MIN, plafon LIMIT_CAP (alasan di
+  // CONFIG). Kalimat ke customer: "dua kali order rata-rata Bapak". Band tanpa tempo → limit 0.
+  let limit = tempo > 0 ? p.medianOrder * C.LIMIT_ORDER_MULT : 0;
   limit = Math.floor(limit / C.LIMIT_ROUND) * C.LIMIT_ROUND;
-  if (limit > 0) limit = clamp(limit, C.LIMIT_MIN, C.LIMIT_MAX);
-  if (limit > 0 && C.LIMIT_CAP && C.LIMIT_CAP[sc.band] > 0) limit = Math.min(limit, C.LIMIT_CAP[sc.band]);
-  // Aturan konsentrasi: tak boleh ada satu customer yang bisa menjatuhkan ROSH sendirian.
-  if (arBook > 0) limit = Math.min(limit, Math.floor(arBook * C.CONC_PCT / C.LIMIT_ROUND) * C.LIMIT_ROUND);
+  if (limit > 0) limit = clamp(limit, C.LIMIT_MIN, C.LIMIT_CAP);
 
   const marginTipis = m.ok && m.cukupUntukVonis &&
                       m.marginBersihPct != null && m.marginBersihPct < C.TARGET_MARGIN_PCT;
@@ -495,67 +503,6 @@ function _custVerdict(p, m, sc, arBook) {
     }
   }
   return { verdict: verdict, alasan: alasan, limit: limit, tempo: tempo, rank: true };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ALOKASI PLAFON — pola _allocateCart (Restock): rangking, lalu bagi budget top-down.
-// Item kecil di belakang tetap bisa masuk kalau sisa budget cukup.
-// ─────────────────────────────────────────────────────────────────────────────
-function _allocateCredit(rows, budget) {
-  const eligible = rows.filter(function(r) { return r.rank && r.limit > 0; })
-    .sort(function(a, b) {
-      // Kualitas per rupiah kredit: yang memberi nilai terbesar per rupiah yang kita tanggung.
-      const qa = (a.margin.ok ? a.margin.marginBersih : 0) / Math.max(1, a.limit);
-      const qb = (b.margin.ok ? b.margin.marginBersih : 0) / Math.max(1, b.limit);
-      if (qb !== qa) return qb - qa;
-      if (b.skor !== a.skor) return b.skor - a.skor;
-      return b.belanjaBulanan - a.belanjaBulanan;
-    });
-
-  let sisa = budget;
-  eligible.forEach(function(r) {
-    if (r.limit <= sisa) { r.jatah = r.limit; sisa -= r.limit; }
-    else { r.jatah = 0; }
-  });
-  return { terpakai: budget - sisa, sisa: sisa };
-}
-
-// Plafon kredit bulan berjalan. Prioritas: ① cell 🟡 yang diketik di sheet → ② Script Property
-// → ③ target glide path bulan ini (TurunBuku.gs) → ④ TARGET_AR.
-function _readCreditBudget() {
-  try {
-    const sh = SpreadsheetApp.openById(CONFIG.SHEET_ID).getSheetByName(CONFIG.TABS.CUSTOMER);
-    if (!sh) return null;
-    const last = Math.min(sh.getLastRow(), 20);
-    if (last < 1) return null;
-    const vals = sh.getRange(1, 1, last, 5).getValues();
-    for (let i = 0; i < vals.length; i++) {
-      if (!/^Plafon kredit bulan ini \(ketik/i.test(String(vals[i][0]))) continue;
-      for (let c = 1; c < 5; c++) {
-        const v = vals[i][c];
-        if (v === '' || v == null) continue;
-        if (typeof v === 'number') return v > 0 ? v : null;
-        const digits = String(v).replace(/[^0-9]/g, '');
-        if (digits) return Number(digits);
-      }
-      return null;
-    }
-  } catch (e) { Logger.log('Baca plafon kredit manual gagal: ' + e.message); }
-  return null;
-}
-
-function _resolveCreditBudget(today, arBook) {
-  const cell = _readCreditBudget();
-  if (cell && cell > 0) return { budget: cell, src: 'manual (ketik di sheet)', manual: true };
-  const prop = _props().getProperty(CONFIG.TURUN_BUKU.BUDGET_PROP);
-  if (prop && num(prop) > 0) {
-    return { budget: num(prop), src: 'Script Property ' + CONFIG.TURUN_BUKU.BUDGET_PROP, manual: true };
-  }
-  if (typeof _glideTargetFor === 'function') {
-    const t = _glideTargetFor(today, arBook);
-    if (t && t > 0) return { budget: Math.round(t), src: 'target glide path bulan ini' };
-  }
-  return { budget: CONFIG.TURUN_BUKU.TARGET_AR, src: 'target akhir program' };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -659,7 +606,7 @@ function buildCustomerReport(invoices, today, yMap) {
     const p = s.p;
     const sc = _custRiskScore(p, priorBuku);
     const m  = _custMarginStats(s.g, marginCtx);
-    const v  = _custVerdict(p, m, sc, arBook);
+    const v  = _custVerdict(p, m, sc);
     const y  = (yMap && yMap[s.g.name]) || {};
     list.push({
       key: s.g.key, customer: s.g.name, salesman: s.g.salesman || '(POS / online)',
@@ -670,13 +617,11 @@ function buildCustomerReport(invoices, today, yMap) {
       maxOpenDpd: p.maxOpenDpd, belanjaBulanan: p.belanjaBulanan, cadangan: p.cadangan,
       bulanTertahan: p.bulanTertahan, tempoModus: p.tempoModus, isCod: p.isCod,
       isDormant: p.isDormant, nPaid: p.nPaid, invCount: p.invCount,
-      margin: m, limit: v.limit, tempo: v.tempo, jatah: 0,
+      medianOrder: p.medianOrder, nOrder: p.nOrder,
+      margin: m, limit: v.limit, tempo: v.tempo,
       limitDisetujui: y.limit || '', catatan: y.catatan || ''
     });
   });
-
-  const bud = _resolveCreditBudget(today, arBook);
-  const alloc = _allocateCredit(list, bud.budget);
 
   list.sort(function(a, b) {
     const ra = CUST_VERDICT_RANK[a.verdict] || 9, rb = CUST_VERDICT_RANK[b.verdict] || 9;
@@ -686,8 +631,13 @@ function buildCustomerReport(invoices, today, yMap) {
     return vb - va;
   });
 
-  const totals = { arBook: arBook, budget: bud.budget, budgetSrc: bud.src, budgetManual: !!bud.manual,
-                   terpakai: alloc.terpakai, sisa: alloc.sisa,
+  // Σ limit berlaku (Limit Disetujui menang, else Saran Limit) untuk customer yang memegang
+  // tempo. Ini pagar total kredit vs target buku; dibandingkan di RINGKAS, bukan dialokasikan.
+  let limitSum = 0, limitCount = 0;
+  list.forEach(function(r) {
+    if (r.tempo > 0) { const l = _limitBerlaku(r); if (l > 0) { limitSum += l; limitCount++; } }
+  });
+  const totals = { arBook: arBook, limitSum: limitSum, limitCount: limitCount,
                    priorBuku: priorBuku, marginCtx: marginCtx,
                    dinilai: list.filter(function(r) { return r.rank; }).length,
                    jumlah: list.length,
@@ -746,113 +696,85 @@ function collectCustomerYellow(files) {
 function writeCustomerTab(report) {
   const sh = uiSheet(CONFIG.TABS.CUSTOMER);
   // uiSheet memanggil clear(), dan clear() TIDAK melepas pembekuan baris/kolom. Tanpa pelepasan
-  // eksplisit ini, pembekuan dari versi tab sebelumnya tetap menempel selamanya walau kodenya
-  // sudah tidak memanggil setFrozen* lagi — persis yang terjadi 2026-09-02: 50 baris beku
-  // tertinggal, tab tak bisa di-scroll, Sheets mengeluh "window is too small". Pola pelepasan
-  // ini sudah dipakai Collected.gs, Route.gs, dan writePoolTab.
+  // eksplisit ini, pembekuan dari versi tab sebelumnya tetap menempel selamanya (kejadian 2026-09-02).
   sh.setFrozenColumns(0);
   sh.setFrozenRows(0);
   const SPAN = CUST_SPAN;
+  const C = CUST_COL;
   const t = report.totals;
   const mc = t.marginCtx;
+  const CC = CONFIG.CUSTOMER;
+  const targetAr = CONFIG.TURUN_BUKU.TARGET_AR;
 
   let r = uiBanner(sh, 1, SPAN, '🧭 Rapor Customer — boleh kasih order baru atau tidak',
     'Dua sudut pandang: SKOR BAYAR dari seluruh riwayat pembayaran (kelakuan lama luntur separuh ' +
-    'tiap 6 bulan) dan MARGIN BERSIH setelah biaya modal piutang. Semua kolom Saran bersifat ' +
-    'usulan; penerapannya manual di Accurate oleh Nathan. Dibuat ulang otomatis tiap jam 5 pagi.',
+    'tiap 6 bulan) dan MARGIN BERSIH setelah biaya modal piutang. Saran Limit = ' + CC.LIMIT_ORDER_MULT +
+    ' × order rata-rata, maks ' + rupiah(CC.LIMIT_CAP) + '; tempo ' + CC.TEMPO_MAX + ' hari untuk semua. ' +
+    'Semua kolom Saran bersifat usulan; penerapannya manual di Accurate oleh Nathan. Dibuat ulang tiap jam 5 pagi.',
     UI.INK, UI.BAND);
 
-  // ── RINGKAS ──
-  r = uiSection(sh, r, SPAN, 'RINGKAS PORTOFOLIO', UI.GREEN);
+  // ── RINGKAS: hanya angka yang mengubah keputusan ──
+  r = uiSection(sh, r, SPAN, 'RINGKAS', UI.GREEN);
+  const lewat = t.limitSum > targetAr;
   const ringkas = [
-    // Cell ini HANYA menampung ketikan Bro. Nilai hasil fallback sengaja TIDAK ditulis balik:
-    // kalau ditulis, sync berikutnya membacanya sebagai ketikan manual dan angkanya jadi lengket
-    // di angka lama (ketahuan 2026-09-02: plafon terbaca "manual" padahal tak pernah diketik).
-    ['Plafon kredit bulan ini (ketik →)', t.budgetManual ? t.budget : '',
-      'Berlaku sekarang: ' + rupiah(t.budget) + ' · sumber ' + t.budgetSrc +
-      '. Ketik angka di sebelah kiri untuk menimpa; kosongkan untuk ikut target program otomatis.'],
-    ['Terpakai oleh saran limit', t.terpakai, t.sisa >= 0
-      ? 'Sisa ' + rupiah(t.sisa) : 'KELEBIHAN ' + rupiah(-t.sisa)],
-    ['Piutang berjalan sekarang', t.arBook, 'Total outstanding seluruh customer'],
-    ['Customer pegang tempo', t.tempoCount + ' customer', 'Ini angka yang harus turun, bukan cuma rupiahnya'],
-    ['Customer dinilai', t.dinilai + ' dari ' + t.jumlah,
-      'Sisanya tunai, dorman, atau belum cukup data'],
-    ['Total Gagal Bayar (Potensi Besar)', t.cadangan,
-      'Perkiraan bagian piutang yang berpotensi tidak tertagih, dihitung dari umur tunggakannya']
+    ['Piutang berjalan', t.arBook, 'Total outstanding seluruh customer · target buku ' + rupiah(targetAr)],
+    ['Σ limit kredit berlaku', t.limitSum,
+      t.limitCount + ' customer pegang tempo. ' +
+      (lewat
+        ? '⚠ LEWAT target buku ' + rupiah(targetAr) + ' sebesar ' + rupiah(t.limitSum - targetAr) +
+          '. Turunkan LIMIT_ORDER_MULT di CONFIG (2 → 1,5) atau pangkas Limit Disetujui terbesar.'
+        : '✓ di bawah target buku ' + rupiah(targetAr) + ', sisa ruang ' + rupiah(targetAr - t.limitSum) + '.')],
+    ['Customer dinilai', t.dinilai + ' dari ' + t.jumlah, 'Sisanya tunai, dorman, atau belum cukup data']
   ];
   ['🟢 GAS', '🟡 GAS TERBATAS', '🟠 NAIKKAN HARGA', '🔴 STOP-COD'].forEach(function(v) {
     const b = t.perVerdict[v];
     if (b) ringkas.push([v, b.n + ' customer', 'nunggak ' + rupiah(b.rp)]);
   });
   if (mc.enabled) {
+    const gpm = t.lineRevenue > 0 ? t.marginKotor / t.lineRevenue : null;
+    ringkas.push(['Margin kotor buku', gpm == null ? '-' : (gpm * 100).toFixed(1) + '%',
+      'COCOKKAN tiap bulan dengan Gross Profit Margin di Accurate (Laporan › Rasio Keuangan Per Bulan). ' +
+      'Selisih >2 poin = harga beli di master barang salah, margin per customer belum layak dipakai. ' +
+      'Band normal ' + Math.round(CC.MARGIN_BAND_LOW * 100) + '-' + Math.round(CC.MARGIN_BAND_HIGH * 100) + '%.']);
+    ringkas.push(['Margin bersih buku', t.marginBersih,
+      'setelah biaya modal ' + rupiah(t.biayaModal) + ' (' + Math.round(CC.COST_OF_CAPITAL_ANNUAL * 100) +
+      '% per tahun) atas omzet ' + rupiah(t.lineRevenue)]);
     const bad = Object.keys(mc.badMonths || {}).sort();
     if (bad.length) {
       ringkas.push(['Bulan dikecualikan dari margin',
-        bad.map(function(k) {
-          const x = mc.badMonths[k];
-          return k + ' (' + (x.arah === 'rugi' ? 'rugi ' : 'untung ') + x.nilai + '%)';
-        }).join(', '),
-        'Angka bulan itu jauh di luar band margin normal ' +
-        Math.round(CONFIG.CUSTOMER.MARGIN_BAND_LOW * 100) + '-' +
-        Math.round(CONFIG.CUSTOMER.MARGIN_BAND_HIGH * 100) + '%, padahal perbandingannya masih ' +
-        'memakai harga beli HARI INI. Yang berubah harga belinya, bukan cara jualnya, jadi bulan ' +
-        'itu tidak ikut dihitung. Akan pulih sendiri begitu harga beli historis terkumpul.']);
+        bad.map(function(k) { const x = mc.badMonths[k]; return k + ' (' + x.arah + ' ' + x.nilai + '%)'; }).join(', '),
+        'Harga beli sudah berubah sejak bulan itu; angkanya tidak dipercaya dan tidak ikut dihitung. Pulih sendiri begitu harga beli historis terkumpul.']);
     }
-    ringkas.push(['Kualitas data margin',
-      mc.fakturTercakup + ' / ' + mc.fakturTotal + ' faktur ketarik',
-      mc.fakturTercakup < mc.fakturTotal
-        ? '⚠ Belum lengkap. Run Full Sync lagi sampai penuh.' : '✓ lengkap']);
-    const gpm = t.lineRevenue > 0 ? t.marginKotor / t.lineRevenue : null;
-    ringkas.push(['Margin kotor buku', gpm == null ? '-' : (gpm * 100).toFixed(1) + '%',
-      'COCOKKAN dengan Gross Profit Margin di laporan Accurate (Rasio Keuangan Per Bulan). ' +
-      'Kalau selisihnya lebih dari 2 poin, ada yang salah di sisi harga beli dan angka margin ' +
-      'per customer di bawah belum layak dipakai. Band normal ' +
-      Math.round(CONFIG.CUSTOMER.MARGIN_BAND_LOW * 100) + '-' +
-      Math.round(CONFIG.CUSTOMER.MARGIN_BAND_HIGH * 100) + '%.']);
-    ringkas.push(['Margin bersih buku', t.marginBersih,
-      'setelah biaya modal ' + rupiah(t.biayaModal) + ' (' +
-      Math.round(CONFIG.CUSTOMER.COST_OF_CAPITAL_ANNUAL * 100) + '% per tahun) atas omzet ' +
-      rupiah(t.lineRevenue)]);
+    if (mc.fakturTercakup < mc.fakturTotal) {
+      ringkas.push(['⚠ Data margin belum lengkap', mc.fakturTercakup + ' / ' + mc.fakturTotal + ' faktur',
+        'Run Full Sync lagi sampai penuh; margin customer bisa bergeser.']);
+    }
     if (t.rugiRp > 0) {
       const rp = t.lineRevenue > 0 ? t.rugiRp / t.lineRevenue : 0;
-      const hist = (t.costHist + t.costSnap) > 0 ? t.costHist / (t.costHist + t.costSnap) : 0;
       ringkas.push(['⚠ Dijual di bawah modal', t.rugiRp,
-        (rp * 100).toFixed(1) + '% dari omzet. ' +
-        (hist < 0.5
-          ? 'HATI-HATI membacanya: baru ' + Math.round(hist * 100) + '% omzet yang punya harga beli ' +
-            'historis, sisanya dibandingkan dengan harga beli HARI INI, padahal harga beli naik-turun. ' +
-            'Faktur lama bisa kelihatan rugi padahal saat itu untung. Jalankan menu Diag jual di bawah modal ' +
-            'dan lihat sebaran per bulan.'
-          : 'Harga beli historis sudah menutup ' + Math.round(hist * 100) + '% omzet, jadi angka ini ' +
-            'sudah cukup bisa dipercaya. Jalankan menu Diag jual di bawah modal untuk rinciannya.')]);
+        (rp * 100).toFixed(1) + '% dari omzet. Rincian per SKU dan per bulan: menu Diag jual di bawah modal.']);
     }
   } else {
-    ringkas.push(['Sisi margin', 'BELUM AKTIF',
-      'Jalankan menu Diag vendorPrice dulu, baru nyalakan CONFIG.CUSTOMER.MARGIN_ENABLED']);
+    ringkas.push(['Sisi margin', 'BELUM AKTIF', 'Jalankan menu Diag vendorPrice dulu, baru nyalakan CONFIG.CUSTOMER.MARGIN_ENABLED']);
   }
-  const budgetRow = r;
-  ringkas.forEach(function(row, idx) {
-    _mblock(sh, r, 1, 3, row[0]).setFontWeight(idx === 0 ? 'bold' : 'normal');
-    const cell = _mblock(sh, r, 4, 6, row[1]);
+  ringkas.forEach(function(row) {
+    _mblock(sh, r, 1, 3, row[0]).setFontWeight('bold');
+    const cell = _mblock(sh, r, 4, 5, row[1]);
     if (typeof row[1] === 'number') cell.setNumberFormat('"Rp"#,##0');
-    if (idx === 0) cell.setBackground(UI.AMBER_BODY).setFontWeight('bold')
-                       .setBorder(true, true, true, true, false, false, UI.GOLD,
-                                  SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-    _mblock(sh, r, 7, SPAN, row[2]).setFontColor(UI.NOTE).setFontStyle('italic');
+    if (row[0].indexOf('Σ limit') === 0) cell.setBackground(lewat ? UI.T_RED : UI.T_GREEN).setFontWeight('bold');
+    _mblock(sh, r, 6, SPAN, row[2]).setFontColor(UI.NOTE).setFontStyle('italic').setWrap(true);
     r++;
   });
   r++;
 
-  // Tiap blok baris data dicatat supaya format angka DAN conditional format kena ke dua-duanya.
-  // Bug 2026-09-02: seksi PERLU AKSI SEKARANG sama sekali tak terformat (rasio tampil sebagai
-  // 0.4881874098, rupiah sebagai 20331182.17) karena format cuma dipasang ke blok terakhir.
+  // Tiap blok baris data dicatat supaya format angka DAN conditional format kena ke semuanya.
   const blocks = [];
 
   // ── PERLU AKSI SEKARANG ──
   const urgent = report.list.filter(function(x) {
     return x.verdict === '🔴 STOP-COD' || x.verdict === '🟠 NAIKKAN HARGA';
   }).slice(0, 25);
-  r = uiSection(sh, r, SPAN, '⚠️ PERLU AKSI SEKARANG', UI.RED);
+  r = uiSection(sh, r, SPAN, '⚠️ PERLU AKSI SEKARANG  ·  ' + urgent.length + ' customer', UI.RED);
   if (!urgent.length) {
     sh.getRange(r, 1, 1, SPAN).merge()
       .setValue('✅ Tidak ada customer yang perlu dihentikan atau dinaikkan harganya.')
@@ -866,48 +788,38 @@ function writeCustomerTab(report) {
   r++;
 
   // ── SEMUA CUSTOMER ──
-  r = uiSection(sh, r, SPAN, '📋 SEMUA CUSTOMER', UI.INK);
-  const hrow = r;
+  r = uiSection(sh, r, SPAN, '📋 SEMUA CUSTOMER  ·  ' + report.list.length + ' customer', UI.INK);
   uiHeaderRow(sh, r, CUST_HEADERS); r++;
-  const first = r;
   blocks.push({ first: r, n: report.list.length });
   r = _custWriteRows(sh, r, report.list);
 
   // pita TOTAL
   const totOut = report.list.reduce(function(s, x) { return s + x.outstanding; }, 0);
-  const totJatah = report.list.reduce(function(s, x) { return s + (x.jatah || 0); }, 0);
   sh.getRange(r, 1, 1, SPAN).setBackground(UI.INK).setFontColor(UI.WHITE).setFontWeight('bold');
   sh.getRange(r, 1).setValue('TOTAL — ' + report.list.length + ' customer');
-  sh.getRange(r, 9).setValue(totOut).setNumberFormat('"Rp"#,##0');
-  sh.getRange(r, 21).setValue(totJatah).setNumberFormat('"Rp"#,##0');
-  const totRow = r; r++;
+  sh.getRange(r, C['Nunggak Sekarang']).setValue(totOut).setNumberFormat('"Rp"#,##0');
+  sh.getRange(r, C['Saran Limit']).setValue(t.limitSum).setNumberFormat('"Rp"#,##0');
+  r++;
 
-  // WAJIB sekali untuk semua blok: setConditionalFormatRules mengganti SELURUH aturan sheet,
-  // jadi memanggilnya per blok akan menghapus aturan blok sebelumnya.
+  // WAJIB sekali untuk semua blok: setConditionalFormatRules mengganti SELURUH aturan sheet.
   _custCondFormats(sh, blocks);
-  // JANGAN bekukan baris/kolom di tab ini.
-  //  - setFrozenColumns(n) DITOLAK Sheets ("can't freeze columns which contain only part of a
-  //    merged cell") karena banner dan setiap pita section di-merge selebar seluruh tab, jadi
-  //    batas beku berapa pun akan memotong sel gabungan. Errornya melempar SETELAH baris ditulis
-  //    sehingga tulisan terakhir tak sempat ter-flush dan seksi bawah tampak kosong.
-  //  - setFrozenRows(hrow) juga salah: hrow ada di baris ke-50-an (setelah RINGKAS + PERLU AKSI),
-  //    membekukan sebanyak itu membuat Sheets mengeluh jendelanya terlalu kecil.
-  // Tab ini punya beberapa seksi bertumpuk, jadi memang tidak cocok dibekukan.
+  // JANGAN bekukan baris/kolom di tab ini: banner & pita seksi di-merge selebar tab (Sheets menolak
+  // freeze kolom yang memotong merge, dan errornya baru melempar SETELAH baris ditulis).
 
   r = uiFootnote(sh, r, SPAN,
-    '◆ Sisi bayar memakai SELURUH riwayat faktur; sisi margin maksimal ' +
-    CONFIG.CUSTOMER.MARGIN_WINDOW_MONTHS + ' bulan karena data rincian barang lebih tua dari itu ' +
-    'sudah dihapus otomatis. Harga beli memakai harga TERAKHIR di Accurate, jadi margin bersifat ' +
-    'indikatif untuk membandingkan antar customer, bukan angka pembukuan. Retur barang belum ' +
-    'terhitung (tidak ada sumbernya di API), jadi margin customer yang sering retur agak ' +
-    'kelebihan. Kolom Limit Disetujui dan Catatan Nathan diisi manual dan tidak akan tertimpa sync.');
+    '◆ Sisi bayar memakai SELURUH riwayat faktur; sisi margin maksimal ' + CC.MARGIN_WINDOW_MONTHS +
+    ' bulan (rincian barang lebih tua sudah dihapus otomatis). Margin indikatif untuk membandingkan antar ' +
+    'customer, bukan angka pembukuan; retur belum terhitung. Limit Disetujui dan Catatan Nathan diisi ' +
+    'manual dan tidak tertimpa sync; kalau Limit Disetujui diisi, itu yang berlaku di Status Customer dan Stop Supply.');
   r++;
 
   _custCaraBaca(sh, r, SPAN);
 
-  const w = [220, 120, 150, 140, 90, 95, 110, 90, 130, 110, 130, 100, 130, 130, 105, 120,
-             130, 110, 120, 130, 120, 110, 110, 380, 130, 220];
-  w.forEach(function(px, i) { sh.setColumnWidth(i + 1, px); });
+  const widths = { 'Customer': 220, 'Sales': 110, 'Loyalitas (4bln)': 170, 'Keputusan': 150, 'Skor Bayar': 80,
+                   'Rata2 Telat (hari)': 95, 'Nunggak Sekarang': 130, 'Telat Terlama (hari)': 95,
+                   'Belanja / bln': 125, 'Order Rata2 (median)': 125, 'Margin Kotor %': 95, 'Margin Bersih %': 95,
+                   'Saran Naik Harga': 100, 'Saran Limit': 120, 'Alasan': 420, 'Limit Disetujui': 130, 'Catatan Nathan': 220 };
+  CUST_HEADERS.forEach(function(h, i) { sh.setColumnWidth(i + 1, widths[h] || 110); });
   return sh;
 }
 
@@ -919,21 +831,14 @@ function _custWriteRows(sh, row, rows) {
     const showM = M && m.ok;
     return [
       x.customer, x.salesman, x.tierText, x.verdict,
-      x.rank ? x.skor : '', x.rank ? x.band : '',
+      x.rank ? x.skor : '',
       x.wadl == null ? '' : Math.round(x.wadl),
-      x.shareH15 == null ? '' : x.shareH15,
       x.outstanding, x.maxOpenDpd == null ? '' : x.maxOpenDpd,
-      x.belanjaBulanan,
-      M ? m.cakupan : '',
-      showM ? m.omzetTercakup : (M ? CUST_NO_MARGIN : ''),
-      showM ? m.marginKotor : (M ? CUST_NO_MARGIN : ''),
-      showM && m.marginKotorPct != null ? m.marginKotorPct : '',
-      showM ? m.biayaModal : '',
-      showM ? m.marginBersih : '',
+      x.belanjaBulanan, x.medianOrder > 0 ? x.medianOrder : '',
+      showM && m.marginKotorPct != null ? m.marginKotorPct : (M && !m.ok ? CUST_NO_MARGIN : ''),
       showM && m.marginBersihPct != null ? m.marginBersihPct : '',
-      x.cadangan,
-      x.limit, x.jatah, x.tempo,
       showM && m.naikPct > 0 ? m.naikPct : '',
+      x.limit > 0 ? x.limit : '',
       x.alasan, x.limitDisetujui, x.catatan
     ];
   });
@@ -944,23 +849,22 @@ function _custWriteRows(sh, row, rows) {
   return row + matrix.length;
 }
 
-// Format angka SATU blok baris. Dipanggil dari _custWriteRows sehingga berlaku untuk setiap
-// seksi yang menulis baris customer, bukan cuma yang terakhir.
+// Format angka SATU blok baris. Dipanggil dari _custWriteRows sehingga berlaku untuk setiap seksi.
 function _custNumberFormats(sh, first, n) {
   if (n <= 0) return;
-  [9, 11, 13, 14, 16, 17, 19, 20, 21, 25].forEach(function(c) {      // rupiah, tanpa desimal
-    sh.getRange(first, c, n, 1).setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
+  const C = CUST_COL;
+  ['Nunggak Sekarang', 'Belanja / bln', 'Order Rata2 (median)', 'Saran Limit', 'Limit Disetujui'].forEach(function(h) {
+    sh.getRange(first, C[h], n, 1).setNumberFormat('"Rp"#,##0').setHorizontalAlignment('right');
   });
-  [8, 12, 15, 18, 23].forEach(function(c) {                          // persen, 1 desimal
-    sh.getRange(first, c, n, 1).setNumberFormat('0.0%').setHorizontalAlignment('center');
+  ['Margin Kotor %', 'Margin Bersih %', 'Saran Naik Harga'].forEach(function(h) {
+    sh.getRange(first, C[h], n, 1).setNumberFormat('0.0%').setHorizontalAlignment('center');
   });
-  [5, 7, 10, 22].forEach(function(c) {                               // bilangan bulat
-    sh.getRange(first, c, n, 1).setNumberFormat('#,##0').setHorizontalAlignment('center');
+  ['Skor Bayar', 'Rata2 Telat (hari)', 'Telat Terlama (hari)'].forEach(function(h) {
+    sh.getRange(first, C[h], n, 1).setNumberFormat('#,##0').setHorizontalAlignment('center');
   });
   sh.getRange(first, 1, n, 4).setHorizontalAlignment('left');
-  sh.getRange(first, 6, n, 1).setHorizontalAlignment('center');
-  sh.getRange(first, 24, n, 1).setWrap(true).setVerticalAlignment('top');
-  sh.getRange(first, 26, n, 1).setWrap(true).setVerticalAlignment('top');
+  sh.getRange(first, C['Alasan'], n, 1).setWrap(true).setVerticalAlignment('top');
+  sh.getRange(first, C['Catatan Nathan'], n, 1).setWrap(true).setVerticalAlignment('top');
   sh.getRange(first, CUST_COL_YEL1, n, 2).setBackground(UI.AMBER_BODY);
 }
 
@@ -968,11 +872,10 @@ function _custNumberFormats(sh, first, n) {
 function _custCondFormats(sh, blocks) {
   const use = (blocks || []).filter(function(b) { return b && b.n > 0; });
   if (!use.length) return;
-  const rng = function(col) {
-    return use.map(function(b) { return sh.getRange(b.first, col, b.n, 1); });
-  };
-  const kep = rng(4), skor = rng(5), telat = rng(10), cak = rng(12);
-  const mb = rng(17), mbPct = rng(18), naik = rng(23), tier = rng(3);
+  const C = CUST_COL;
+  const rng = function(h) { return use.map(function(b) { return sh.getRange(b.first, C[h], b.n, 1); }); };
+  const kep = rng('Keputusan'), skor = rng('Skor Bayar'), telat = rng('Telat Terlama (hari)');
+  const mbPct = rng('Margin Bersih %'), naik = rng('Saran Naik Harga'), tier = rng('Loyalitas (4bln)');
   const B = CONFIG.CUSTOMER.BAND_CUTS;
   const R = SpreadsheetApp.newConditionalFormatRule;
   sh.setConditionalFormatRules([
@@ -991,8 +894,6 @@ function _custCondFormats(sh, blocks) {
     R().whenNumberGreaterThanOrEqualTo(CONFIG.CUSTOMER.STOP_DPD).setBackground(UI.T_RED).setRanges(telat).build(),
     R().whenNumberBetween(15, CONFIG.CUSTOMER.STOP_DPD - 1).setBackground('#fed7aa').setRanges(telat).build(),
     R().whenNumberBetween(1, 14).setBackground(UI.T_AMBER).setRanges(telat).build(),
-    R().whenNumberLessThan(CONFIG.CUSTOMER.MIN_COVERAGE).setBackground(UI.T_AMBER).setRanges(cak).build(),
-    R().whenNumberLessThan(0).setBackground(UI.T_RED).setRanges(mb).build(),
     R().whenNumberLessThan(CONFIG.CUSTOMER.TARGET_MARGIN_PCT).setBackground(UI.T_AMBER).setRanges(mbPct).build(),
     R().whenNumberGreaterThan(0).setBackground('#fed7aa').setRanges(naik).build(),
     R().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges(tier).build(),
@@ -1003,40 +904,28 @@ function _custCondFormats(sh, blocks) {
 }
 
 function _custCaraBaca(sh, row, SPAN) {
+  const CC = CONFIG.CUSTOMER;
   let r = uiSection(sh, row, SPAN, '📖 CARA BACA', UI.GOLD);
   sh.getRange(r, 1, 1, SPAN).merge().setValue(
-    'Cara pakai cepat: baca kolom Keputusan saja. 🟢 GAS berarti aman, order baru jalan. ' +
-    '🟡 GAS TERBATAS berarti boleh jalan tapi jangan lewat Saran Limit dan pakai tempo yang lebih ' +
-    'pendek. 🟠 NAIKKAN HARGA berarti dia bayar oke tapi kita nyaris tidak untung, naikkan harga ' +
-    'sebesar kolom Saran Naik Harga sebelum order berikutnya. 🔴 STOP-COD berarti jangan proses ' +
-    'order baru sampai lunas, kalau mau lanjut minta bayar di muka.')
+    'Cara pakai cepat: baca kolom Keputusan saja. 🟢 GAS = order baru jalan, tempo ' + CC.TEMPO_MAX + ' hari sampai Saran Limit. ' +
+    '🟡 GAS TERBATAS = boleh jalan tapi jangan lewat Saran Limit; kalau limitnya kosong berarti bayar dulu. ' +
+    '🟠 NAIKKAN HARGA = bayarnya oke tapi kita nyaris tidak untung, naikkan harga sebesar kolom Saran Naik Harga dulu. ' +
+    '🔴 STOP-COD = jangan proses order baru sampai lunas; kalau mau lanjut bayar di muka.')
     .setBackground(UI.GREEN_SOFT).setWrap(true).setVerticalAlignment('middle');
   sh.setRowHeight(r, 56); r++;
 
   const rows = [
-    ['Keputusan', 'Kesimpulan gabungan dua hal: seberapa rapi dia bayar, dan seberapa untung kita dari dia setelah dikurangi biaya modal.'],
-    ['Skor Bayar', '0 sampai 100, makin tinggi makin rapi bayarnya. Dihitung dari SELURUH riwayat pembayaran, tapi kelakuan lama luntur separuh tiap 6 bulan sehingga customer yang sudah memperbaiki diri tidak dihukum selamanya. Ditimbang rupiah: telat di faktur besar lebih berat daripada telat di faktur kecil. Faktur yang masih terbuka hari ini ikut dihitung, jadi orang yang sedang macet tidak bisa sembunyi di balik riwayat lama yang bersih.'],
-    ['Risiko', 'Terjemahan Skor Bayar jadi kata: AMAN, HATI, RISIKO, BAHAYA. Ambangnya angka tetap, bukan peringkat, supaya kalau seluruh pelanggan memburuk tidak ada yang lolos hanya karena paling bagus di antara yang jelek.'],
-    ['Rata2 Telat', 'Rata rata berapa hari lewat jatuh tempo uangnya baru masuk, ditimbang nilai rupiah. Hanya menghitung yang SUDAH dibayar, jadi bacanya: kalau dia bayar, telatnya sekian.'],
-    ['Lewat H+15', 'Berapa persen rupiah dia yang sampai harus diambil alih ' + CONFIG.AR_OFFICER_NAME + '. Ini ukuran ekor, bukan rata rata: ada customer yang rata ratanya bagus tapi sesekali menghilang lama.'],
-    ['Nunggak Sekarang', 'Sisa tagihan yang belum dibayar hari ini. Angka ini sama persis dengan TOP DEBITUR di tab Ringkasan.'],
-    ['Telat Terlama', 'Faktur terbuka paling lama, dihitung dari jatuh tempo. Kalau lewat ' + CONFIG.CUSTOMER.STOP_DPD + ' hari, Keputusan langsung merah berapa pun skornya.'],
-    ['Belanja / bln', 'Rata rata nilai faktur per bulan selama ' + CONFIG.CUSTOMER.LIMIT_WINDOW_MONTHS + ' bulan terakhir. Ini dasar hitungan Saran Limit.'],
-    ['Belanja / bln vs Omzet Tercakup', 'Dua angka ini sering tidak sama dan itu wajar. Belanja per bulan menghitung SEMUA faktur; Omzet Tercakup hanya menghitung faktur yang rincian barangnya sudah ketarik DAN yang bulannya dipakai untuk margin. Bulan yang harga belinya sudah berubah dibuang dari sisi margin, jadi omzet yang dipakai menghitung margin bisa jauh lebih kecil daripada total belanjanya.'],
-    ['Cakupan Data', 'Berapa persen faktur customer ini yang rincian barangnya sudah ketarik dari Accurate. Di bawah ' + Math.round(CONFIG.CUSTOMER.MIN_COVERAGE * 100) + '% berwarna kuning, karena menebak margin dari data separuh lebih berbahaya daripada tidak menampilkannya.'],
-    ['Kenapa margin kosong', 'Kolom margin diisi kalau rincian barangnya sudah ketarik minimal ' + Math.round(CONFIG.CUSTOMER.MIN_COVERAGE * 100) + '% dan harga belinya diketahui untuk minimal ' + Math.round(CONFIG.CUSTOMER.MIN_COST_COVERAGE * 100) + '% omzet. Kalau masih kosong, alasan persisnya ditulis di kolom Alasan. Customer yang tidak belanja sama sekali dalam ' + CONFIG.CUSTOMER.MARGIN_WINDOW_MONTHS + ' bulan memang tidak akan pernah punya angka margin, karena tidak ada yang bisa dihitung.'],
-    ['Margin kecil tapi tidak disuruh naik harga', 'Vonis NAIKKAN HARGA hanya keluar kalau belanjanya minimal ' + rupiah(CONFIG.CUSTOMER.MIN_OMZET_RP) + ' dalam ' + CONFIG.CUSTOMER.MARGIN_WINDOW_MONTHS + ' bulan. Angka marginnya tetap ditampilkan untuk pembeli yang lebih kecil, tapi tidak dipakai menjatuhkan vonis: pada belanja sejuta dua juta, satu pesanan yang agak beda harga saja sudah bisa menjungkirkan persentasenya. Untuk mereka kolom Alasan menulis pantau dulu.'],
-    ['Margin Kotor', 'Nilai jual barang dikurangi harga beli, sudah dikurangi diskon faktur. Band normal ROSH ' + Math.round(CONFIG.CUSTOMER.MARGIN_BAND_LOW * 100) + ' sampai ' + Math.round(CONFIG.CUSTOMER.MARGIN_BAND_HIGH * 100) + ' persen; di bawah itu berarti harga kurang, jauh di atas itu biasanya untung sesaat atau harga beli yang sudah berubah. Harga beli dipakai yang tercatat saat faktur dipanen; untuk faktur lama yang belum sempat terekam, dipakai harga beli terakhir sehingga sifatnya indikatif, bukan angka pembukuan.'],
-    ['Biaya Modal', 'Harga dari uang yang nongkrong di customer. Dihitung sejak faktur terbit sampai uang benar benar masuk, bukan cuma hari telatnya, karena tempo yang kita berikan juga ada biayanya. Tarif ' + Math.round(CONFIG.CUSTOMER.COST_OF_CAPITAL_ANNUAL * 100) + '% per tahun.'],
-    ['Cek kewajaran', 'Angka Margin kotor buku di bagian RINGKAS harus mendekati Gross Profit Margin di laporan Accurate (menu Laporan, Rasio Keuangan Per Bulan). Itu pembanding dari luar sistem ini, jadi kalau keduanya berjauhan, yang salah kemungkinan besar harga beli di master barang, bukan cara customer membayar.'],
-    ['Margin Bersih', 'Margin Kotor dikurangi Biaya Modal. Inilah angka yang membongkar pola omzet besar margin tipis: kalau dia bayarnya lambat, biaya modal memakan habis marginnya dan kolom ini jadi merah walaupun omzetnya kelihatan mantap.'],
-    ['Potensi Gagal Bayar', 'Perkiraan bagian tagihan customer ini yang berpotensi tidak tertagih, dihitung dari umur tunggakannya: makin tua makin besar porsinya. Ini perkiraan risiko ke depan, bukan kerugian yang sudah terjadi.'],
-    ['Saran Limit', 'Belanja per bulan dikali ' + CONFIG.CUSTOMER.LIMIT_MULT.HATI + ' untuk customer HATI (maks ' + rupiah(CONFIG.CUSTOMER.LIMIT_CAP.HATI) + ') dan dikali ' + CONFIG.CUSTOMER.LIMIT_MULT.AMAN + ' untuk customer AMAN, mengikuti tabel Tiering di Panduan Sales. Customer RISIKO dan BAHAYA tidak diberi limit: bayar dulu. Dibatasi maksimal ' + Math.round(CONFIG.CUSTOMER.CONC_PCT * 100) + '% dari total piutang ROSH supaya tidak ada satu customer pun yang bisa menjatuhkan kita sendirian.'],
-    ['Jatah Plafon', 'Saran Limit setelah dibagi rata dari plafon kredit bulan ini. Kalau plafon tidak cukup untuk semua, yang memberi nilai terbesar per rupiah kredit dapat duluan, sisanya kebagian nol dan sementara dilayani COD.'],
-    ['Saran Tempo', 'Satu tempo untuk semua customer kredit: ' + CONFIG.CUSTOMER.TEMPO_MAX + ' hari, tidak ada tempo 21 atau 30. Yang membedakan customer bagus dan biasa adalah limitnya, bukan panjang temponya. Mesin hanya boleh MEMPERPENDEK tempo, tidak pernah memperpanjang sendiri; customer yang selama ini 7 hari tetap 7 hari. Faktur yang sudah terbit dengan tempo lama tetap mengikuti tempo lamanya sampai lunas.'],
-    ['Saran Naik Harga', 'Kenaikan harga yang dibutuhkan supaya customer ini mencapai margin bersih ' + Math.round(CONFIG.CUSTOMER.TARGET_MARGIN_PCT * 100) + '%. Muncul hanya kalau margin bersihnya tipis. Naikkan harga dulu, lepas belakangan.'],
-    ['Kelas khusus', '💵 TUNAI berarti dia belum pernah diberi tempo sama sekali, jadi catatan bayarnya yang sempurna itu belum membuktikan apa apa. 🆕 BARU berarti faktur pertama. ⚪ BELUM DINILAI berarti data belum cukup. 😴 DORMAN berarti tidak ada order ' + CONFIG.CUSTOMER.DORMANT_MONTHS + ' bulan terakhir.'],
-    ['Dua kolom kuning', 'Limit Disetujui dan Catatan Nathan diisi tangan dan tidak akan tertimpa sync. Kalau Limit Disetujui diisi, angka itulah yang berlaku, bukan Saran Limit.']
+    ['Skor Bayar', '0 sampai 100, makin tinggi makin rapi. Dari SELURUH riwayat pembayaran, kelakuan lama luntur separuh tiap 6 bulan, ditimbang rupiah. Faktur yang masih terbuka ikut dihitung, jadi yang sedang macet tidak bisa sembunyi di balik riwayat lama. Warna: hijau ≥' + CC.BAND_CUTS.AMAN + ' (AMAN), kuning ≥' + CC.BAND_CUTS.HATI + ' (HATI), oranye ≥' + CC.BAND_CUTS.RISIKO + ' (RISIKO), merah di bawahnya (BAHAYA).'],
+    ['Rata2 Telat', 'Rata rata berapa hari lewat jatuh tempo uangnya baru masuk, ditimbang rupiah. Hanya menghitung yang SUDAH dibayar: kalau dia bayar, telatnya sekian.'],
+    ['Nunggak Sekarang · Telat Terlama', 'Sisa tagihan hari ini dan umur faktur terbuka paling lama (dari jatuh tempo). Telat ≥' + CC.STOP_DPD + ' hari = Keputusan langsung merah berapa pun skornya.'],
+    ['Belanja / bln · Order Rata2', 'Rata rata nilai faktur per bulan dan MEDIAN nilai satu order, keduanya ' + CC.LIMIT_WINDOW_MONTHS + ' bulan terakhir. Median dipakai untuk limit supaya satu order besar sekali lewat tidak membuka limit permanen.'],
+    ['Saran Limit', CC.LIMIT_ORDER_MULT + ' kali Order Rata2, dibulatkan ' + rupiah(CC.LIMIT_ROUND) + ', minimal ' + rupiah(CC.LIMIT_MIN) + ', maksimal ' + rupiah(CC.LIMIT_CAP) + '. Dua kali karena customer mingguan punya dua faktur terbuka dalam satu siklus tempo ' + CC.TEMPO_MAX + ' hari. Di atas ' + rupiah(CC.LIMIT_CAP) + ' hanya lewat Limit Disetujui (keputusan owner). Kosong = tidak diberi tempo, bayar dulu.'],
+    ['Margin Kotor % · Margin Bersih %', 'Kotor = jual dikurangi beli, sudah dikurangi diskon faktur; band normal ROSH ' + Math.round(CC.MARGIN_BAND_LOW * 100) + '-' + Math.round(CC.MARGIN_BAND_HIGH * 100) + '%. Bersih = kotor dikurangi biaya modal (' + Math.round(CC.COST_OF_CAPITAL_ANNUAL * 100) + '% per tahun, dihitung sejak faktur terbit sampai uang masuk). Bersih di bawah ' + Math.round(CC.TARGET_MARGIN_PCT * 100) + '% berwarna kuning: omzet besar tapi kita nyaris tidak untung karena dia bayar lambat.'],
+    ['Kenapa margin kosong', 'Rincian barangnya belum ketarik minimal ' + Math.round(CC.MIN_COVERAGE * 100) + '%, harga beli belum diketahui, atau belanjanya di bawah ' + rupiah(CC.MIN_OMZET_RP) + ' dalam ' + CC.MARGIN_WINDOW_MONTHS + ' bulan. Sebab persisnya ditulis di kolom Alasan. Vonis NAIKKAN HARGA hanya keluar kalau belanjanya cukup besar untuk dipercaya.'],
+    ['Saran Naik Harga', 'Kenaikan harga supaya customer ini mencapai margin bersih ' + Math.round(CC.TARGET_MARGIN_PCT * 100) + '%. Muncul hanya kalau marginnya tipis. Naikkan harga dulu, lepas belakangan.'],
+    ['Kelas khusus', '💵 TUNAI = belum pernah diberi tempo, catatan sempurnanya belum membuktikan apa apa. 🆕 BARU = faktur pertama, bayar dulu sampai 3 transaksi. ⚪ BELUM DINILAI = data belum cukup. 😴 DORMAN = tidak ada order ' + CC.DORMANT_MONTHS + ' bulan.'],
+    ['Dua kolom kuning', 'Limit Disetujui dan Catatan Nathan diisi tangan, tidak tertimpa sync. Kalau Limit Disetujui diisi, angka itulah yang dipakai Status Customer dan Stop Supply, bukan Saran Limit. Catatan Nathan juga tempat mencatat alasan SOP yang belum otomatis: SKK belum tanda tangan, giro ditolak, HP duplikat, blacklist.'],
+    ['Cek kewajaran bulanan', 'Margin kotor buku di RINGKAS harus mendekati Gross Profit Margin di laporan Accurate. Kalau berjauhan, yang salah kemungkinan besar harga beli di master barang, bukan cara customer membayar.']
   ];
   rows.forEach(function(pair) {
     _mblock(sh, r, 1, 3, pair[0]).setFontWeight('bold').setVerticalAlignment('top');

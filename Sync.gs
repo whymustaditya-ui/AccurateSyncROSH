@@ -30,7 +30,7 @@ var SYNC_START = 0;   // set in fullSync(); attachCustomerContacts uses it as a 
 var TARGET_SS = null; // when set, _ss() points writers at this spreadsheet (role files); null = master
 
 // When set, every tab lookup renames itself through this map (nama master → nama tampilan).
-// Dipakai file Deden: dia bukan orang AR, jadi "Pool B — Ongoing AR" / "KPI Matriks Sales"
+// Dipakai file Deden: dia bukan orang AR, jadi "Pool B — Ongoing AR" / "KPI Sales (Deden)"
 // tak berarti apa-apa buat dia. Aliasing dipasang di TIGA chokepoint saja (uiSheet, _tab,
 // writePoolTab) + orderTabs, jadi TIDAK ADA writer yang perlu diubah dan master/Ade tetap
 // pakai nama aslinya. Peta ada di TABS_DEDEN (Code.gs) — aman diedit kapan saja, sheet lama
@@ -88,7 +88,6 @@ function fullSync() {
     const poolB        = buildPoolB(invoices, today);
     const invoiceSales = buildInvoiceSales(invoices, today);
     const invoiceLain  = buildInvoiceLain(invoices, today);
-    const dueReminders = buildDueReminders(invoices, today);    // penagihan JT (H-1 → H+14, 4-touch)
     const followUps    = buildFollowUpReminders(invoices, today); // reaktivasi (dormancy)
     const penagihanBatch = buildPenagihanBatch(invoices, today);  // pesan WA group-by-customer (H-1 → H+14)
     // ⛔ Stop Supply dibangun BELAKANGAN (setelah Rapor Customer) karena kode LIM butuh limit per customer.
@@ -131,7 +130,7 @@ function fullSync() {
     migrateTabNames();                       // rename old tabs in place (preserve Pool A/B 🟡 data)
     deleteDeprecatedTabs();                  // drop legacy 'Tagihan Ade'
     writeCaraBacaTab();                       // 📖 onboarding guide (static, rebuilt each sync)
-    writeTodoTab(dueReminders, followUps);    // 📌 daily action list
+    writeReaktivasiTab(followUps);            // 📞 customer lama tidak order
     writePesanTab(penagihanBatch);            // ✉️ pesan WA siap kirim, group-by-customer (master-only)
     // 📇 Kontak Customer (master-only) — directory semua customer (nama/WA/telp bisnis).
     // FAIL-SOFT: harvest time-budgeted (drain bertahap); gagal harvest ≠ gagal sync.
@@ -208,12 +207,15 @@ function fullSync() {
       }
     }
 
+    // Ringkasan master membaca rapor + status (gate order hari ini) selain health.
+    ctx.rapor = rapor; ctx.custStatus = custStatus;
     writeSummaryTab(ctx, 'master', health);
     orderTabs();                             // arrange tabs L→R for the 3 audiences
 
-    // ── ADE file — Summary (AR-scoped) + Pool A/B (editable 🟡) + KPI Matriks AR ──
+    // ── ADE file — Summary (AR-scoped) + Pool A/B (editable 🟡) + KPI AR ──
     if (adeSS) {
       TARGET_SS = adeSS;
+      migrateTabNames();                     // rename tab lama di file Ade juga (KPI Matriks AR → KPI AR)
       writeSummaryTab(ctx, 'ade');
       writePoolTab(CONFIG.TABS.POOL_A, poolA, 'A', yA);
       writePoolTab(CONFIG.TABS.POOL_B, poolB, 'B', yB);
@@ -267,8 +269,7 @@ function fullSync() {
     TARGET_SS = null;                        // back to master for logging
     _log('OK', 'Synced ' + invoices.length + ' invoices · ' + enriched + ' enriched · ' +
               'Pool A ' + poolA.length + ' · Pool B ' + poolB.length + ' · ' +
-              invoiceSales.length + ' di Sales · To-Do ' + dueReminders.length + ' penagihan / ' +
-              followUps.length + ' follow-up · role: ' +
+              invoiceSales.length + ' di Sales · ' + followUps.length + ' reaktivasi · role: ' +
               (adeSS ? 'Ade✓' : 'Ade–') + ' ' + (dedenSS ? 'Deden✓' : 'Deden–') + '. ' +
               ((new Date() - t0) / 1000).toFixed(1) + 's');
   } catch (e) {
@@ -948,34 +949,13 @@ function buildInvoiceLain(invoices, today) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TO-DO / PERINGATAN — daily action list (rolling worklist, covers EVERYONE)
-//   A) Penagihan jatuh tempo  — unpaid invoices in the H-1 → H+14 window (4-touch).
-//   B) Follow-up reaktivasi   — customers gone quiet, by days since last invoice.
+// REAKTIVASI — customer yang lama tidak order, urut hari sejak faktur terakhir.
+// (Seksi "Penagihan jatuh tempo" versi To-Do lama dihapus 2026-09-05: duplikat ✉️ Pesan
+// Penagihan, yang memakai window & bucket yang sama plus teks pesannya.)
 // Pure projection of Pass-1 data — no extra API calls.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// A) Due-date reminders. Unpaid invoices with daysPastDue in [-1, PENAGIHAN_WINDOW_MAX(14)],
-//    bucketed to the 4-touch milestones (H-1 / H+3 / H+7 / H+14) — SAMA dengan tab Pesan
-//    Penagihan (pakai `_penagihanBucket`). Lewat H+14 → handover Ade / Pool; tidak di sini.
-function buildDueReminders(invoices, today) {
-  return invoices
-    .filter(function(i) {
-      return !i.isPaid && i.outstanding > 0 &&
-             i.daysPastDue != null && i.daysPastDue >= CONFIG.PENAGIHAN_WINDOW_MIN && i.daysPastDue <= CONFIG.PENAGIHAN_WINDOW_MAX;
-    })
-    .map(function(i) {
-      return {
-        number: i.number, customer: i.customer, salesman: i.salesman,
-        dueDate: i.dueDate, daysPastDue: i.daysPastDue,
-        outstanding: i.outstanding, noTlp: i.noTlp || '',
-        tierText: i.custTierText || '',
-        bucket: _penagihanBucket(i.daysPastDue)
-      };
-    })
-    .sort(function(a, b) { return b.daysPastDue - a.daysPastDue; }); // paling overdue di atas
-}
-
-// B) Follow-up reaktivasi. Group every invoice by customer, find the most recent
+// // B) Follow-up reaktivasi. Group every invoice by customer, find the most recent
 //    order (MAX transDate), and bucket by how many days the customer has been quiet.
 //    Keep customers dormant ≥7 days. Carries the latest invoice's salesman / phone
 //    and the customer's total current outstanding for context.
@@ -1061,90 +1041,58 @@ function computeCustomerTiers(invoices, today) {
   return map;
 }
 
-// Writer — one tab, two sections, built with the shared UI helpers (Style.gs).
-function writeTodoTab(due, followup) {
-  const sh = uiSheet(CONFIG.TABS.TODO);
-  const SPAN = 8;
+// Writer — 📞 Reaktivasi Customer (master-only).
+function writeReaktivasiTab(followup) {
+  const sh = uiSheet(CONFIG.TABS.REAKTIVASI);
+  sh.setFrozenRows(0);
+  const H = ['Customer', 'Sales', 'Order Terakhir', 'Hari Sejak Order', 'Bucket', 'Outstanding', 'No. Telp', 'Loyalitas (4bln)'];
+  const SPAN = H.length;
   let r = 1;
 
   r = uiBanner(sh, r, SPAN,
-    '📌 To-Do — Peringatan Harian',
-    'Daftar aksi harian — siapa yang harus ditagih & di-follow-up hari ini. ' +
-    'Dibuat ulang otomatis tiap jam 5 pagi dari data Accurate. Jangan edit manual.',
-    UI.INK, UI.BAND);
-  r += 1;
+    '📞 Reaktivasi Customer — siapa yang lama tidak order',
+    'Customer diurutkan dari yang paling lama diam sejak faktur terakhir di Accurate. Bahan follow-up sales ' +
+    '(tanya kebutuhan, tawarkan stok), bukan penagihan. Untuk tagihan lihat ✉️ Pesan Penagihan. ' +
+    'Dibuat ulang otomatis tiap jam 5 pagi.',
+    UI.BLUE, UI.BLUE_SOFT);
 
-  // ── SECTION A — PENAGIHAN JATUH TEMPO ──
-  r = uiSection(sh, r, SPAN, 'PENAGIHAN — Jatuh Tempo (H-1 → H+14, belum bayar)', UI.RED);
-  uiHeaderRow(sh, r, ['No. Invoice', 'Customer', 'Sales', 'Jatuh Tempo', 'Reminder', 'Outstanding', 'No. Telp', 'Loyalitas (4bln)']);
-  r += 1;
-  if (due.length) {
-    const aStart = r;
-    const aRows = due.map(function(i) {
-      return [i.number, i.customer, i.salesman || '(POS / online)', fmtDate(i.dueDate),
-              i.bucket, i.outstanding, i.noTlp || '', i.tierText || ''];
-    });
-    sh.getRange(aStart, 1, aRows.length, SPAN).setValues(aRows).setVerticalAlignment('middle');
-    sh.getRange(aStart, 6, aRows.length, 1).setNumberFormat('"Rp"#,##0');
-    const aRem = sh.getRange(aStart, 5, aRows.length, 1);
-    sh.setConditionalFormatRules((sh.getConditionalFormatRules() || []).concat([
-      SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H-1').setBackground(UI.T_AMBER).setRanges([aRem]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H+3').setBackground('#fed7aa').setRanges([aRem]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H+7').setBackground(UI.T_RED).setRanges([aRem]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H+14').setBackground('#fecaca').setRanges([aRem]).build()
-    ]));
-    r += aRows.length;
-  } else {
-    sh.getRange(r, 1, 1, SPAN).merge().setValue('✅ Tidak ada invoice jatuh tempo di window H-1 → H+14.')
-      .setFontColor(UI.NOTE).setFontStyle('italic').setVerticalAlignment('middle');
-    r += 1;
-  }
-  r += 1; // gap
-
-  // ── SECTION B — FOLLOW-UP REAKTIVASI ──
-  r = uiSection(sh, r, SPAN, 'FOLLOW-UP — Reaktivasi Customer (sejak order terakhir)', UI.BLUE);
-  uiHeaderRow(sh, r, ['Customer', 'Sales', 'Order Terakhir', 'Hari Sejak Order', 'Bucket', 'Outstanding', 'No. Telp', 'Loyalitas (4bln)']);
-  r += 1;
+  uiHeaderRow(sh, r, H); const hrow = r; r++;
   if (followup.length) {
-    const bStart = r;
-    const bRows = followup.map(function(c) {
+    const rows = followup.map(function(c) {
       return [c.customer, c.salesman || '(POS / online)', fmtDate(c.lastTransDate),
               c.daysSince, c.bucket, c.outstanding, c.noTlp || '', c.tierText || ''];
     });
-    sh.getRange(bStart, 1, bRows.length, SPAN).setValues(bRows).setVerticalAlignment('middle');
-    sh.getRange(bStart, 6, bRows.length, 1).setNumberFormat('"Rp"#,##0');
-    const bDays = sh.getRange(bStart, 4, bRows.length, 1);
-    sh.setConditionalFormatRules((sh.getConditionalFormatRules() || []).concat([
-      SpreadsheetApp.newConditionalFormatRule().whenNumberGreaterThanOrEqualTo(90)
-        .setBackground(UI.T_RED).setRanges([bDays]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenNumberBetween(30, 89)
-        .setBackground('#fed7aa').setRanges([bDays]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenNumberBetween(7, 29)
-        .setBackground(UI.T_AMBER).setRanges([bDays]).build()
-    ]));
-    r += bRows.length;
+    const n = rows.length;
+    sh.getRange(r, 1, n, SPAN).setValues(rows).setVerticalAlignment('middle');
+    sh.getRange(r, 1, n, SPAN).setBorder(true, true, true, true, true, true, UI.BORDER, SpreadsheetApp.BorderStyle.SOLID);
+    sh.getRange(r, 6, n, 1).setNumberFormat('"Rp"#,##0');
+    sh.getRange(r, 4, n, 1).setHorizontalAlignment('center');
+    sh.getRange(r, 5, n, 1).setHorizontalAlignment('center');
+    const days = sh.getRange(r, 4, n, 1), tier = sh.getRange(r, 8, n, 1);
+    const R = SpreadsheetApp.newConditionalFormatRule;
+    sh.setConditionalFormatRules([
+      R().whenNumberGreaterThanOrEqualTo(90).setBackground(UI.T_RED).setRanges([days]).build(),
+      R().whenNumberBetween(30, 89).setBackground('#fed7aa').setRanges([days]).build(),
+      R().whenNumberBetween(7, 29).setBackground(UI.T_AMBER).setRanges([days]).build(),
+      R().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges([tier]).build(),
+      R().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges([tier]).build(),
+      R().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges([tier]).build(),
+      R().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges([tier]).build()
+    ]);
+    r += n;
   } else {
-    sh.getRange(r, 1, 1, SPAN).merge().setValue('✅ Tidak ada customer yang perlu di-follow-up (semua order < 7 hari).')
+    sh.getRange(r, 1, 1, SPAN).merge().setValue('✅ Semua customer order dalam 7 hari terakhir.')
       .setFontColor(UI.NOTE).setFontStyle('italic').setVerticalAlignment('middle');
-    r += 1;
+    r++;
   }
-  r += 1; // gap
+  r++;
 
   uiFootnote(sh, r, SPAN,
-    '◆ Cara baca: PENAGIHAN = invoice belum lunas, di-bucket 4-touch dari Tgl Jatuh Tempo (H-1 jatuh tempo, ' +
-    'H+3 nudge, H+7 stop-supply, H+14 terakhir) — sama dengan tab ✉️ Pesan Penagihan; lewat H+14 handover ke Ade. ' +
-    'FOLLOW-UP = customer di-bucket dari hari sejak ORDER terakhir (transaksi terakhir di Accurate); ' +
-    'makin lama makin perlu di-reaktivasi.');
+    '◆ Bucket dari hari sejak ORDER terakhir: H+7 mulai perlu disapa, H+30 dan H+60 kemungkinan pindah supplier, H+90 dianggap hilang. ' +
+    'Outstanding = sisa tagihan customer itu hari ini; kalau ada, selesaikan dulu lewat Pesan Penagihan sebelum menawarkan order baru.');
 
-  sh.setColumnWidth(1, 140);
-  sh.setColumnWidth(2, 200);
-  sh.setColumnWidth(3, 130);
-  sh.setColumnWidth(4, 130);
-  sh.setColumnWidth(5, 150);
-  sh.setColumnWidth(6, 130);
-  sh.setColumnWidth(7, 140);
-  sh.setColumnWidth(8, 190); // Loyalitas (4bln)
-  sh.setFrozenRows(2); // banner + subtitle
+  [220, 120, 110, 110, 90, 130, 130, 190].forEach(function(px, i) { sh.setColumnWidth(i + 1, px); });
+  sh.setFrozenRows(hrow);
   return sh;
 }
 

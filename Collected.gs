@@ -3,7 +3,7 @@
  *
  * Rincian per faktur di balik angka agregat "Collected". Tab lain di file Deden semuanya
  * berorientasi tagihan yang BELUM lunas (Tagihan Sales, Pool B); collected cuma muncul
- * sebagai satu skalar di KPI Matriks Sales + kolom Collected di Riwayat THP. Tab ini
+ * sebagai satu skalar di KPI Sales + kolom Collected di Riwayat Gaji. Tab ini
  * memecah skalar itu jadi daftar faktur.
  *
  * Dua section, newest-first: bulan berjalan + bulan lalu. Pengelompokan = BULAN UANG MASUK
@@ -108,7 +108,7 @@ function writeCollectedTab(months) {
 
   let r = uiBanner(sh, 1, SPAN, '💰 Faktur Collected — rincian uang masuk',
     'Faktur kamu dikelompokkan per BULAN UANG MASUK (tanggal pembayaran), bukan bulan faktur terbit. ' +
-    'Total "Dibayar (bln ini)" tiap bulan = angka Collected di KPI Matriks Sales & Riwayat THP.',
+    'Total "Dibayar (bln ini)" tiap bulan = angka Collected di KPI Sales & Riwayat Gaji.',
     UI.GREEN, UI.GREEN_SOFT);
   sh.setFrozenRows(2);
 

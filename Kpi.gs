@@ -133,7 +133,7 @@ function diskonTier(ratio) {
   return 0.00;
 }
 
-// Styled to mirror writeThpAdeTab (KPI Matriks AR): banner → green THP headline →
+// Styled to mirror writeThpAdeTab (KPI AR): banner → green THP headline →
 // Komponen KPI section → Skor Total band → Take-Home Pay section → footnote.
 // `role` = 'deden' saat menulis ke file Deden: kolom keterangan baris Komisi
 // dikosongkan (dia cuma mau lihat angka + basisnya, tanpa paragraf aturan).
@@ -453,14 +453,15 @@ function writeThpAdeTab(a) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SUMMARY — overview of the four tabs
+// SUMMARY — dashboard utama (master) / ringkasan per role (Ade, Deden)
 // ─────────────────────────────────────────────────────────────────────────────
 // role: 'master' (default) shows everything · 'ade' hides THP Sales · 'deden' hides THP AR.
 // Keeps each staff file from leaking the other person's take-home pay.
 function writeSummaryTab(ctx, role, health) {
   role = role || 'master';
-  const showSales = (role === 'master' || role === 'deden');
-  const showAr    = (role === 'master' || role === 'ade');
+  const isMaster = (role === 'master');
+  const showSales = (isMaster || role === 'deden');
+  const showAr    = (isMaster || role === 'ade');
   const inv = ctx.invoices, sales = ctx.sales, ar = ctx.ar;
 
   // collected this month split by attribution
@@ -480,89 +481,119 @@ function writeSummaryTab(ctx, role, health) {
   const outstandingAde = outstandingA + outstandingB;
 
   const sh = uiSheet(CONFIG.TABS.SUMMARY);
-  const SPAN = 3;
+  sh.setFrozenRows(0);
+  const SPAN = 4;
+  const pct = function(x) { return x == null ? '—' : (x * 100).toFixed(0) + '%'; };
   let r = 1;
 
   r = uiBanner(sh, r, SPAN,
-    '📋 Summary — ROSH AR & Sales',
+    '📋 Ringkasan — ROSH Piutang & Penjualan',
     'Periode ' + _monthLabel() + ' · diperbarui otomatis tiap jam 5 pagi · update terakhir ' +
     Utilities.formatDate(new Date(), 'GMT+7', 'dd/MM/yyyy HH:mm'),
     UI.INK, UI.BAND);
   r += 1;
 
-  // section helper: band + rows([label, value, note]); bolds col1, greys note.
+  // section helper: band + rows([label, value, note, (tint)]); bolds col1, greys note.
   const block = function(label, color, rows) {
     r = uiSection(sh, r, SPAN, label, color);
     rows.forEach(function(row) {
-      sh.getRange(r, 1, 1, SPAN).setValues([row]).setVerticalAlignment('middle');
+      sh.getRange(r, 1, 1, 3).setValues([[row[0], row[1], row[2]]]).setVerticalAlignment('middle');
       sh.getRange(r, 1).setFontWeight('bold');
-      sh.getRange(r, 3).setFontColor(UI.NOTE).setFontStyle('italic');
+      sh.getRange(r, 2).setHorizontalAlignment('right');
+      sh.getRange(r, 3).setFontColor(UI.NOTE).setFontStyle('italic').setWrap(true);
+      if (row[3]) sh.getRange(r, 2).setBackground(row[3]).setFontWeight('bold');
       r += 1;
     });
     r += 1;
   };
 
-  // PIUTANG — Sales row for master/Deden; Pool A/B + Total Ade for master/Ade; grand total master only.
+  // ── 1. POSISI PIUTANG ──
   const piutangRows = [];
-  if (showSales)
-    piutangRows.push(['Di tangan Sales (pre-handover)', rupiah(outstandingSales), ctx.invoiceSales.length + ' invoice → ' + CONFIG.TABS.INVOICE_SALES]);
-  if (showAr) {
-    piutangRows.push(['Pool A — legacy backlog (frozen)', rupiah(outstandingA), ctx.poolA.length + ' invoice → ' + CONFIG.TABS.POOL_A]);
-    piutangRows.push(['Pool B — ongoing AR', rupiah(outstandingB), ctx.poolB.length + ' invoice → ' + CONFIG.TABS.POOL_B]);
-    piutangRows.push(['Total di tangan ' + CONFIG.AR_OFFICER_NAME, rupiah(outstandingAde), 'Pool A + Pool B']);
+  if (isMaster && health) {
+    const T = CONFIG.TURUN_BUKU;
+    let jalurNote = 'target akhir program ' + rupiah(T.TARGET_AR), jalurTint = null;
+    try {
+      const g = _glidePath(health.totalAR, new Date());
+      const idx = _tbMonthIndex(g.startKey, _tbMonthKey(new Date()));
+      const row = (idx >= 0 && idx < g.rows.length) ? g.rows[idx] : null;
+      if (row) {
+        const sel = health.totalAR - row.target;
+        jalurNote = 'target bulan ini ' + rupiah(row.target) + ' · ' +
+          (sel > 0 ? '⚠ tertinggal ' + rupiah(sel) : '✅ sesuai jalur') + ' · akhir program ' + rupiah(T.TARGET_AR);
+        jalurTint = sel > 0 ? UI.T_AMBER : UI.T_GREEN;
+      }
+    } catch (e) {}
+    const npl = health.aging ? (health.aging.d61_90.out + health.aging.d90plus.out) : 0;
+    piutangRows.push(['TOTAL PIUTANG', rupiah(health.totalAR), jalurNote, jalurTint]);
+    piutangRows.push(['Lewat jatuh tempo', rupiah(health.overdueAR), pct(health.overduePct) + ' dari total · ' + health.openCount + ' faktur · ' + health.custWithAR + ' customer']);
+    piutangRows.push(['NPL (lewat 60 hari)', rupiah(npl), pct(health.totalAR > 0 ? npl / health.totalAR : 0) + ' dari total · yang paling sulit cair']);
+    piutangRows.push(['DSO', (health.dso == null ? '—' : health.dso + ' hari'), 'rata-rata hari piutang tertagih · makin kecil makin sehat']);
+    piutangRows.push(['Di tangan Sales (H+0–H+14)', rupiah(outstandingSales), ctx.invoiceSales.length + ' faktur → ' + CONFIG.TABS.INVOICE_SALES]);
+    piutangRows.push(['Di tangan ' + CONFIG.AR_OFFICER_NAME + ' (Pool A + B)', rupiah(outstandingAde),
+      ctx.poolA.length + ' + ' + ctx.poolB.length + ' faktur → ' + CONFIG.TABS.POOL_A + ' / ' + CONFIG.TABS.POOL_B]);
+  } else {
+    if (showSales)
+      piutangRows.push(['Di tangan Sales (pre-handover)', rupiah(outstandingSales), ctx.invoiceSales.length + ' invoice → ' + CONFIG.TABS.INVOICE_SALES]);
+    if (showAr) {
+      piutangRows.push(['Pool A — piutang lama (beku)', rupiah(outstandingA), ctx.poolA.length + ' invoice → ' + CONFIG.TABS.POOL_A]);
+      piutangRows.push(['Pool B — piutang berjalan', rupiah(outstandingB), ctx.poolB.length + ' invoice → ' + CONFIG.TABS.POOL_B]);
+      piutangRows.push(['Total di tangan ' + CONFIG.AR_OFFICER_NAME, rupiah(outstandingAde), 'Pool A + Pool B']);
+    }
   }
-  if (role === 'master')
-    piutangRows.push(['TOTAL OUTSTANDING', rupiah(outstandingSales + outstandingAde), 'Semua piutang']);
-  block('PIUTANG (OUTSTANDING)', UI.RED, piutangRows);
+  block('POSISI PIUTANG', UI.RED, piutangRows);
 
-  // COLLECTED — only relevant to Sales view (master full breakdown; Deden just his own). Skip for Ade.
+  // ── 2. GATE ORDER HARI INI (master) ──
+  if (isMaster && ctx.custStatus && ctx.rapor) {
+    const rows = ctx.custStatus.rows || [];
+    const tidak = rows.filter(function(x) { return x.boleh === STATUS_TIDAK; });
+    const tempoN = rows.filter(function(x) { return x.boleh === STATUS_YA && x.cara.indexOf(STATUS_TEMPO) === 0; }).length;
+    const codN = rows.filter(function(x) { return x.boleh === STATUS_YA && x.cara === STATUS_COD; }).length;
+    const nunggakTidak = tidak.reduce(function(s, x) { return s + x.outstanding; }, 0);
+    const t = ctx.rapor.totals;
+    const lewat = t.limitSum > CONFIG.TURUN_BUKU.TARGET_AR;
+    const urgent = (t.perVerdict['🔴 STOP-COD'] || { n: 0 }).n + (t.perVerdict['🟠 NAIKKAN HARGA'] || { n: 0 }).n;
+    block('GATE ORDER HARI INI', UI.INK, [
+      ['⛔ Customer ditahan', tidak.length + ' customer', 'nunggak ' + rupiah(nunggakTidak) + ' → ' + CONFIG.TABS.STOP_SUPPLY, tidak.length ? UI.T_RED : UI.T_GREEN],
+      ['✅ Boleh order', tempoN + ' tempo · ' + codN + ' bayar dulu', 'tempo ' + CONFIG.CUSTOMER.TEMPO_MAX + ' hari untuk semua → ' + CONFIG.TABS.STATUS_CUST],
+      ['Σ limit kredit berlaku', rupiah(t.limitSum), (lewat ? '⚠ LEWAT' : '✓ di bawah') + ' target buku ' + rupiah(CONFIG.TURUN_BUKU.TARGET_AR) + ' · ' + t.limitCount + ' customer pegang tempo', lewat ? UI.T_RED : UI.T_GREEN],
+      ['Perlu aksi owner', urgent + ' customer', 'STOP-COD atau NAIKKAN HARGA → ' + CONFIG.TABS.CUSTOMER, urgent ? UI.T_AMBER : null]
+    ]);
+  }
+
+  // ── 3. COLLECTED BULAN INI ──
   if (showSales) {
     const collRows = [['Oleh Sales (' + CONFIG.SALES_NAME + ')', rupiah(collDeden), 'Basis KPI Sales']];
-    if (role === 'master') {
+    if (isMaster) {
       collRows.push(['POS / online', rupiah(collPos), 'Tanpa salesman']);
       collRows.push(['Sales lain', rupiah(collOther), '']);
-      collRows.push(['TOTAL COLLECTED', rupiah(collTotal), 'Exact dari receiptHistory']);
+      collRows.push(['TOTAL COLLECTED', rupiah(collTotal),
+        health ? 'vs terbit bulan ini ' + rupiah(health.billedMTD) + ' (' + pct(health.collectVsBill) + ')' : 'Exact dari receiptHistory']);
     }
     block('COLLECTED BULAN INI', UI.GREEN, collRows);
   }
 
-  if (showSales) {
-    const salesRows = [
-      ['Skor KPI', (sales.totalScore * 100).toFixed(0) + '%', 'Maks 106%'],
-      ['Base + Tunjangan + Komisi', rupiah(sales.base) + ' + ' + rupiah(sales.tunjangan) + ' + ' + rupiah(sales.commission), ''],
-      ['THP Sales', rupiah(sales.thp), '→ ' + CONFIG.TABS.THP_SALES]
-    ];
-    if (role === 'master') salesRows.push(['Riwayat bulanan', '→ ' + CONFIG.TABS.THP_HISTORY, 'Arsip THP & skor tiap bulan']);
-    block('THP SALES — ' + CONFIG.SALES_NAME, UI.BLUE, salesRows);
-  }
+  // ── 4. GAJI BULAN INI ──
+  const gajiRows = [];
+  if (showSales) gajiRows.push(['THP ' + CONFIG.SALES_NAME, rupiah(sales.thp),
+    'skor KPI ' + (sales.totalScore * 100).toFixed(0) + '% · komisi ' + rupiah(sales.commission) + ' → ' + CONFIG.TABS.THP_SALES]);
+  if (showAr) gajiRows.push(['THP ' + CONFIG.AR_OFFICER_NAME, rupiah(ar.thp),
+    'komisi ' + rupiah(ar.komisi) + ' → ' + CONFIG.TABS.THP_ADE]);
+  if (isMaster) gajiRows.push(['Riwayat bulanan', '→ ' + CONFIG.TABS.THP_HISTORY, 'Arsip gaji & skor tiap bulan']);
+  block('GAJI BULAN INI', UI.BLUE, gajiRows);
 
-  if (showAr) {
-    const arRows = [
-      ['Komisi diperoleh bln ini', rupiah(ar.komisi), 'Atas masuk kas (aging sejak handover)'],
-      ['Pokok + Tunjangan Ops + Komisi', rupiah(ar.base) + ' + ' + rupiah(ar.ops) + ' + ' + rupiah(ar.komisi), 'Floor ' + rupiah(ar.floor)],
-      ['THP ' + CONFIG.AR_OFFICER_NAME, rupiah(ar.thp), '→ ' + CONFIG.TABS.THP_ADE]
-    ];
-    if (role === 'master') arRows.push(['Riwayat bulanan', '→ ' + CONFIG.TABS.THP_HISTORY, 'Arsip THP & komisi tiap bulan']);
-    block('THP AR OFFICER — ' + CONFIG.AR_OFFICER_NAME, UI.BLUE, arRows);
-  }
-
-  // BUSINESS HEALTH — folded into Ringkasan (master only) so the sheet keeps one strategic
-  // screen instead of a separate tab. Needs 4 cols (aging + top debitur tables). `health`
-  // is only passed in the master block; ade/deden get undefined → block skipped.
-  let foot = 'Total invoice dari Accurate: ' + inv.length + '. Semua angka dihitung ulang tiap sync — jangan edit manual.';
-  if (role === 'master' && health) {
-    r = uiSection(sh, r, 4, '📊 BUSINESS HEALTH', UI.INK);
-    r = writeHealthSections(sh, r, health, 4);
-    sh.setColumnWidth(4, 160);
-    foot += ' DSO = Total AR ÷ (billing 90 hari terakhir ÷ 90) — aproksimasi gross wholesale; makin kecil makin cepat tertagih. ' +
-            'Snapshot harian disimpan di sheet tersembunyi "' + SNAP_SHEET + '".';
+  // ── 5. AGING · TREN · TOP DEBITUR (master) ──
+  let foot = 'Total faktur dari Accurate: ' + inv.length + '. Semua angka dihitung ulang tiap sync — jangan edit manual.';
+  if (isMaster && health) {
+    r = writeHealthSections(sh, r, health, SPAN);
+    foot += ' DSO = Total piutang ÷ (penjualan 90 hari terakhir ÷ 90). Snapshot harian di sheet tersembunyi "' + SNAP_SHEET + '".';
   }
 
   uiFootnote(sh, r, SPAN, foot);
 
   sh.setColumnWidth(1, 300);
-  sh.setColumnWidth(2, 240);
-  sh.setColumnWidth(3, 340);
+  sh.setColumnWidth(2, 220);
+  sh.setColumnWidth(3, 420);
+  sh.setColumnWidth(4, 160);
   sh.setFrozenRows(2);
   return sh;
 }

@@ -153,26 +153,7 @@ function writeHealthSections(sh, startRow, m, span) {
   const pct = function(x) { return x == null ? '—' : (x * 100).toFixed(0) + '%'; };
   let r = startRow;
 
-  // ── RINGKAS ──
-  r = uiSection(sh, r, SPAN, 'RINGKAS', UI.INK);
-  uiHeaderRow(sh, r, ['Metrik', 'Nilai', 'Catatan', '']); r += 1;
-  const ringkas = [
-    ['Total AR (outstanding)', rupiah(m.totalAR), m.openCount + ' invoice open · ' + m.custWithAR + ' customer'],
-    ['AR Overdue (lewat JT)', rupiah(m.overdueAR), pct(m.overduePct) + ' dari total AR'],
-    ['AR Belum Jatuh Tempo', rupiah(m.currentAR), 'Masih dalam termin'],
-    ['Collected bulan ini', rupiah(m.collectedMTD), 'Exact dari receiptHistory'],
-    ['Billed bulan ini', rupiah(m.billedMTD), 'Invoice terbit ' + _monthLabel()],
-    ['Collected / Billed', pct(m.collectVsBill), 'Rasio tagih vs terbit bln ini'],
-    ['DSO (Days Sales Outstanding)', (m.dso == null ? '—' : m.dso + ' hari'), 'Total AR ÷ rata2 billing/hari (90 hr)']
-  ];
-  ringkas.forEach(function(row) {
-    sh.getRange(r, 1, 1, 3).setValues([row]).setVerticalAlignment('middle');
-    sh.getRange(r, 1).setFontWeight('bold');
-    sh.getRange(r, 2).setHorizontalAlignment('right');
-    sh.getRange(r, 3).setFontColor(UI.NOTE).setFontStyle('italic');
-    r += 1;
-  });
-  r += 1;
+  // (RINGKAS lama dipindah ke blok POSISI PIUTANG di writeSummaryTab, 2026-09-05.)
 
   // ── AGING AR ──
   r = uiSection(sh, r, SPAN, 'AGING AR — sebaran piutang per umur', UI.RED);

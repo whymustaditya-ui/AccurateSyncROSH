@@ -89,7 +89,7 @@ function _waPhone(raw) {
 // sampai beberapa toko plastik MEMBLOKIR nomor WA ROSH. Nada baru semi-formal: sapaan WA
 // tetap hangat, badan pesan gaya korespondensi sopan. Stop-supply masih disinggung di H+7
 // tapi diframing sebagai enabler ("agar order berikutnya dapat langsung kami proses"),
-// bukan sanksi. Leverage sebenarnya tetap di tab ⛔ Stop Supply (HOLD) + hold manual Nathan.
+// bukan sanksi. Leverage sebenarnya tetap di tab ⛔ Stop Supply + hold manual Nathan.
 // ─────────────────────────────────────────────────────────────────────────────
 function _penagihanMessageBatch(c) {
   const cust = c.customer || 'Bapak/Ibu';

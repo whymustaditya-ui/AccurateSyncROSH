@@ -107,20 +107,23 @@ function writeCaraBacaTab() {
       header: ['Tab', 'Isi', ''],
       rows: [
         [CONFIG.TABS.CARA_BACA, 'Dokumen ini — panduan penggunaan tracker', ''],
-        [CONFIG.TABS.SUMMARY, 'Ringkasan semua tab + kesehatan bisnis (AR aging, DSO, collection, tren harian) dalam satu layar', 'Pantau strategis'],
-        [CONFIG.TABS.TODO, 'To-do harian: penagihan jatuh tempo (H-1→H+3) & follow-up customer pasif', 'Aksi hari ini'],
-        [CONFIG.TABS.PESAN, 'Pesan WA penagihan siap kirim, 1 pesan/pelanggan (gabung faktur H-1→H+14)', 'Copy / tap Kirim WA'],
-        [CONFIG.TABS.STOP_SUPPLY, 'Customer lewat jatuh tempo belum bayar — Nathan tahan order baru sampai lunas. Alasan (OVD/LIM/STOP), sejak kapan, tindakan berikutnya', 'HOLD order (Nathan)'],
-        [CONFIG.TABS.STATUS_CUST, 'Gate harian sales: Boleh Supply? YA/TIDAK, cara bayar, limit & sisa limit tiap customer. Versi Deden hanya customer dia', 'Cek sebelum buat SO'],
-        [CONFIG.TABS.CUSTOMER, 'Rapor per customer: layak dikasih order baru atau tidak, saran limit kredit & tempo, margin bersih setelah biaya modal', 'Gate order baru'],
-        [CONFIG.TABS.TURUN_BUKU, 'Program menurunkan piutang berjalan ke target: jalur bulanan, NPL, gelombang cabut tempo, siapa ditagih dulu', 'Kemudi bulanan'],
-        [CONFIG.TABS.POOL_A, 'Stuck AR — backlog lama, frozen per hari onboard', 'Burn-down ke Rp0'],
-        [CONFIG.TABS.POOL_B, 'Ongoing AR — invoice baru yang lewat ke ' + me + ' (H+15)', 'Terus bertambah'],
-        [CONFIG.TABS.RUTE, 'Daftar jalan penagihan: piutang terbuka per zona, diurut prioritas + rute terdekat', 'Isi Zona & Pin Maps'],
-        [CONFIG.TABS.INVOICE_SALES, 'Piutang yang masih di tangan Sales (pre-handover)', 'H+0–H+14'],
-        [CONFIG.TABS.THP_ADE, 'Komisi, bonus, & take-home pay ' + me + ' bulan ini', ''],
-        [CONFIG.TABS.THP_SALES, 'KPI & take-home pay Sales (Deden & Dian)', ''],
-        [CONFIG.TABS.THP_HISTORY, 'Arsip THP & performa Sales / AR per bulan (riwayat + tren)', 'Master-only']
+        [CONFIG.TABS.SUMMARY, 'Dashboard utama: posisi piutang vs target, gate order hari ini, collected, gaji, aging, tren, top debitur', 'Buka ini dulu'],
+        [CONFIG.TABS.STATUS_CUST, 'Gate sebelum buat SO: Boleh Supply? YA/TIDAK, cara bayar, limit & sisa limit tiap customer. Versi Deden hanya customer dia', 'Sales cek tiap order'],
+        [CONFIG.TABS.STOP_SUPPLY, 'Customer yang ditahan: lewat jatuh tempo (OVD) atau lewat limit (LIM), sejak kapan, tindakan berikutnya', 'Nathan tahan SO'],
+        [CONFIG.TABS.PESAN, 'Pesan WA penagihan siap kirim, 1 pesan/pelanggan, window H-3 → H+14', 'Copy / tap Kirim WA'],
+        [CONFIG.TABS.RUTE, 'Daftar jalan penagihan ' + me + ': piutang terbuka per zona, diurut prioritas + rute terdekat', 'Isi Zona & Pin Maps'],
+        [CONFIG.TABS.CUSTOMER, 'Rapor per customer: skor bayar, margin bersih, saran limit. Sumber angka Status Customer & Stop Supply', 'Owner, mingguan'],
+        [CONFIG.TABS.TURUN_BUKU, 'Jalur bulanan turun ke target piutang + daftar konversi customer lama ke tempo 14 (Hijau/Kuning/Merah)', 'Kemudi bulanan'],
+        [CONFIG.TABS.POOL_A, 'Piutang lama sebelum ' + me + ' onboard, beku', 'Burn-down ke Rp0'],
+        [CONFIG.TABS.POOL_B, 'Piutang berjalan yang lewat ke ' + me + ' (H+15)', 'Terus bertambah'],
+        [CONFIG.TABS.INVOICE_SALES, 'Tagihan yang masih di tangan Sales (H+0 sampai H+14)', ''],
+        [CONFIG.TABS.TAGIHAN_LAIN, 'Tagihan pra-handover di luar Sales (POS, Nathan, lainnya)', ''],
+        [CONFIG.TABS.REAKTIVASI, 'Customer yang lama tidak order, urut hari sejak order terakhir', 'Follow-up sales'],
+        [CONFIG.TABS.KONTAK, 'Direktori semua customer: nama, No WA, No bisnis', ''],
+        [CONFIG.TABS.RESTOCK, 'Saran pembelian per SKU: tier, reorder point, budget', 'Owner'],
+        [CONFIG.TABS.THP_ADE, 'Komisi & take-home pay ' + me + ' bulan ini', ''],
+        [CONFIG.TABS.THP_SALES, 'KPI & take-home pay ' + CONFIG.SALES_NAME + ' bulan ini', ''],
+        [CONFIG.TABS.THP_HISTORY, 'Arsip gaji & performa Sales / AR per bulan', '']
       ] },
     { band: 'POOL A vs POOL B — DEFINISI', color: UI.RED,
       header: ['Konsep', 'Penjelasan', 'Catatan'],
@@ -222,12 +225,15 @@ function writeCaraBacaTab() {
 // ─────────────────────────────────────────────────────────────────────────────
 function orderTabs() {
   const ss = _ss();
+  // Urutan = alur kerja: dashboard → gate harian → penagihan → analisis owner → detail faktur →
+  // sales support → gaji → log.
   const order = [
-    CONFIG.TABS.CARA_BACA, CONFIG.TABS.SUMMARY, CONFIG.TABS.RESTOCK, CONFIG.TABS.TODO,
-    CONFIG.TABS.PESAN, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.STATUS_CUST, CONFIG.TABS.CUSTOMER, CONFIG.TABS.TURUN_BUKU,
-    CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.RUTE,
-    CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.COLLECTED, CONFIG.TABS.TAGIHAN_LAIN, CONFIG.TABS.KONTAK,
-    CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
+    CONFIG.TABS.CARA_BACA, CONFIG.TABS.SUMMARY,
+    CONFIG.TABS.STATUS_CUST, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.PESAN, CONFIG.TABS.RUTE,
+    CONFIG.TABS.CUSTOMER, CONFIG.TABS.TURUN_BUKU,
+    CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.TAGIHAN_LAIN, CONFIG.TABS.COLLECTED,
+    CONFIG.TABS.REAKTIVASI, CONFIG.TABS.KONTAK, CONFIG.TABS.RESTOCK,
+    CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
   ];
   // Position counts only the tabs THIS file actually has. Using the array index would
   // aim past the last sheet in a role file (Deden has ~4 tabs, the array has 16) and

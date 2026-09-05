@@ -120,7 +120,7 @@ function buildStopSupply(invoices, today, rapor) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WRITER — tab ⛔ Stop Supply (HOLD). Semua 🔴 generated. Master-only.
+// WRITER — tab ⛔ Stop Supply. Semua 🔴 generated. Master-only.
 // ─────────────────────────────────────────────────────────────────────────────
 function writeStopSupplyTab(list) {
   const sh = uiSheet(CONFIG.TABS.STOP_SUPPLY);

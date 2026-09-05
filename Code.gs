@@ -327,9 +327,9 @@ const CONFIG = {
   // Sheet tab names (relabeled 2026-05-30; see TAB_MIGRATION for old→new in-place rename)
   TABS: {
     CARA_BACA:     '📖 Cara Baca',          // onboarding guide (static, rebuilt each sync)
-    TODO:          '📌 To-Do — Peringatan', // daily action list: penagihan JT (H-1→H+14, 4-touch) + follow-up reaktivasi (dormancy)
+    REAKTIVASI:    '📞 Reaktivasi Customer', // customer yang lama tidak order, urut hari sejak order terakhir (dulu bagian dari To-Do)
     PESAN:         '✉️ Pesan Penagihan',     // ready-to-send WA collection messages, group-by-customer (Pesan.gs, master-only)
-    STOP_SUPPLY:   '⛔ Stop Supply (HOLD)',   // customer lewat jatuh tempo belum bayar → Nathan tahan SO baru (StopSupply.gs, master-only sejak 2026-09-05)
+    STOP_SUPPLY:   '⛔ Stop Supply',          // customer lewat jatuh tempo / lewat limit → Nathan tahan SO baru (StopSupply.gs, master-only)
     STATUS_CUST:   '🚦 Status Customer',       // gate harian sales: Boleh Supply? + Sisa Limit per customer (Status.gs; master + file Deden discoped)
     KONTAK:        '📇 Kontak Customer',      // directory semua customer: nama + No WA + No Bisnis (Kontak.gs, master-only)
     CUSTOMER:      '🧭 Rapor Customer',       // gate order baru + saran limit & tempo per customer (Customer.gs, master-only)
@@ -337,12 +337,12 @@ const CONFIG = {
     POOL_A:        '🔴 Pool A — Stuck AR',   // FROZEN legacy AR (handover ≤ onboard, unpaid at onboard)
     POOL_B:        '🔵 Pool B — Ongoing AR', // ongoing AR (handover > onboard)
     RUTE:          '🗺️ Rute Penagihan',      // Ade's field drive list: zona priority + nearest-neighbour route (Route.gs)
-    THP_ADE:       '📊 KPI Matriks AR',      // AR Officer KPI + take-home pay + bonuses + penalty flags
-    THP_SALES:     '📊 KPI Matriks Sales',   // Sales KPI + take-home pay
-    THP_HISTORY:   '📈 Riwayat THP',         // monthly payroll/KPI archive per person (ThpHistory.gs, master-only)
+    THP_ADE:       '📊 KPI AR (Ade)',        // AR Officer KPI + take-home pay + penalty flags
+    THP_SALES:     '📊 KPI Sales (Deden)',   // Sales KPI + take-home pay
+    THP_HISTORY:   '📈 Riwayat Gaji',        // monthly payroll/KPI archive per person (ThpHistory.gs)
     INVOICE_SALES: '🧾 Tagihan Sales',       // unpaid & overdue ≤14d (still with Sales, pre-handover) — Deden & Dian only
     COLLECTED:     '💰 Faktur Collected',    // rincian faktur per bulan uang masuk (Collected.gs, file Deden saja)
-    TAGIHAN_LAIN:  '🧾 Tagihan Lain',         // pre-handover unpaid for everyone NOT in SALES_FILTER (Nathan/partner, POS, others)
+    TAGIHAN_LAIN:  '🧾 Tagihan Non-Sales',    // pre-handover unpaid for everyone NOT in SALES_FILTER (Nathan/partner, POS, others)
     SUMMARY:       '📋 Ringkasan',           // overview
     RESTOCK:       '📦 Restock Engine',      // SKU tiering + reorder point + cash-capped PO (Restock.gs, master-only)
     HEALTH:        '📊 Business Health',     // strategic dashboard: AR aging, DSO, collection, trends (Health.gs, master-only)
@@ -360,7 +360,14 @@ const CONFIG = {
     ['THP Sales',      'THP_SALES'],
     ['Invoice Sales',  'INVOICE_SALES'],
     ['Summary',        'SUMMARY'],
-    ['Sync Log',       'LOG']
+    ['Sync Log',       'LOG'],
+    // Rapi-rapi nama tab 2026-09-05 (nama lama → key). Dijalankan di master DAN file Ade.
+    ['⛔ Stop Supply (HOLD)',  'STOP_SUPPLY'],
+    ['📌 To-Do — Peringatan',  'REAKTIVASI'],
+    ['📊 KPI Matriks AR',      'THP_ADE'],
+    ['📊 KPI Matriks Sales',   'THP_SALES'],
+    ['📈 Riwayat THP',         'THP_HISTORY'],
+    ['🧾 Tagihan Lain',        'TAGIHAN_LAIN']
   ]
 };
 
@@ -368,7 +375,7 @@ const CONFIG = {
 // NAMA TAB DI FILE DEDEN (alias tampilan)
 // ─────────────────────────────────────────────────────────────────────────────
 // Nama tab di CONFIG.TABS ditulis dari sudut pandang operator AR ("Pool B — Ongoing AR",
-// "KPI Matriks Sales", "THP"). Deden bukan orang AR — dia butuh nama yang langsung
+// "KPI Sales (Deden)", "THP"). Deden bukan orang AR — dia butuh nama yang langsung
 // menjawab "isi tab ini apa buat gue". Peta ini cuma dipakai saat fullSync menulis ke
 // FILE DEDEN (TAB_ALIAS di Sync.gs); master & file Ade tetap pakai nama aslinya, jadi
 // dokumentasi, collectPoolYellow, dan kebiasaan Ade tidak terganggu.

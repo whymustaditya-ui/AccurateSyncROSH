@@ -151,6 +151,5 @@ function clearYellowAfterLayoutChangeNow() {
   const a = wipe(CONFIG.TABS.CUSTOMER, ['Limit Disetujui', 'Catatan Nathan']);
   const b = wipe(CONFIG.TABS.TURUN_BUKU, ['Status Konversi', 'Catatan']);
   Logger.log('Kolom kuning dibersihkan: Rapor ' + a + ' baris, Turun Buku ' + b + ' baris. Sekarang Run Full Sync.');
-  try { SpreadsheetApp.getUi().alert('Kolom kuning dibersihkan: Rapor ' + a + ' baris, Turun Buku ' + b + ' baris.
-Sekarang jalankan Run Full Sync now.'); } catch (e) {}
+  try { SpreadsheetApp.getUi().alert('Kolom kuning dibersihkan: Rapor ' + a + ' baris, Turun Buku ' + b + ' baris. Sekarang jalankan Run Full Sync now.'); } catch (e) {}
 }

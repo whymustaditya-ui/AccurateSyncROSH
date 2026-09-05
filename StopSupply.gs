@@ -180,8 +180,10 @@ function writeStopSupplyTab(list) {
   sh.getRange(STOPSUP_DROW, C['Alasan'], n, 1).setHorizontalAlignment('center').setFontWeight('bold');
   sh.getRange(STOPSUP_DROW, C['Total Outstanding'], n, 1).setNumberFormat('"Rp"#,##0');
   sh.getRange(STOPSUP_DROW, C['Limit Berlaku'], n, 1).setNumberFormat('"Rp"#,##0');
-  sh.getRange(STOPSUP_DROW, C['Umur Tertua (hari)'], n, 1).setHorizontalAlignment('center');
-  sh.getRange(STOPSUP_DROW, C['Jml Invoice'], n, 1).setHorizontalAlignment('center');
+  // Format angka bulat dipasang EKSPLISIT: tab ini di-rename di tempat dari layout lama, dan format
+  // "Rp" di kolom lama sempat menempel ke kolom Jml Invoice (tampil "Rp1") walau sudah clear().
+  sh.getRange(STOPSUP_DROW, C['Umur Tertua (hari)'], n, 1).setNumberFormat('0').setHorizontalAlignment('center');
+  sh.getRange(STOPSUP_DROW, C['Jml Invoice'], n, 1).setNumberFormat('0').setHorizontalAlignment('center');
   sh.getRange(STOPSUP_DROW, C['Sejak'], n, 1).setNumberFormat('dd/MM/yyyy').setHorizontalAlignment('center');
   sh.getRange(STOPSUP_DROW, C['Tindakan Berikutnya'], n, 1).setWrap(true);
 

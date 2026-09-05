@@ -425,6 +425,7 @@ function onOpen() {
     .addItem('Refresh Kontak Customer', 'refreshKontakNow')
     .addItem('Rebuild Kontak cache (wipe + refetch)', 'rebuildKontakCacheNow')
     .addItem('Refresh Rapor Customer + Turun Buku + Stop Supply + Status', 'refreshCustomerNow')
+    .addItem('Bersihkan kolom kuning (sekali, setelah ganti layout)', 'clearYellowAfterLayoutChangeNow')
     .addItem('Diag vendorPrice (cek sebelum buka margin)', 'diagVendorPrice')
     .addItem('Diag jual di bawah modal', 'diagBelowCost')
     .addItem('Diag kontak fields (WA/telp)', 'diagKontakFields')

@@ -668,19 +668,34 @@ function buildCustomerReport(invoices, today, yMap) {
 // ─────────────────────────────────────────────────────────────────────────────
 function collectCustomerYellow(files) {
   const map = {};
+  const minLimit = CONFIG.CUSTOMER.LIMIT_MIN;
   (files || []).forEach(function(ss) {
     if (!ss) return;
     try {
       const sh = ss.getSheetByName(CONFIG.TABS.CUSTOMER);
       if (!sh) return;
-      const last = sh.getLastRow();
+      const last = sh.getLastRow(), lastCol = sh.getLastColumn();
       if (last < 2) return;
-      const vals = sh.getRange(1, 1, last, CUST_SPAN).getValues();
+      const vals = sh.getRange(1, 1, last, lastCol).getValues();
+      // Cari kolom LEWAT NAMA HEADER, bukan nomor tetap. Bug 2026-09-05: layout berubah 26 → 17
+      // kolom, pembaca lama membaca kolom 16/17 yang di layout lama = Biaya Modal / Margin Bersih,
+      // jadi angka biaya modal terbaca sebagai "limit disetujui" dan semua customer kena LIM.
+      let cLim = -1, cCat = -1;
+      vals.forEach(function(row) {
+        if (cLim >= 0) return;
+        if (String(row[0]).trim() !== 'Customer') return;
+        cLim = row.indexOf('Limit Disetujui'); cCat = row.indexOf('Catatan Nathan');
+      });
+      if (cLim < 0 || cCat < 0) return;            // header belum layout ini → tidak ada 🟡 yang sah
       vals.forEach(function(row) {
         const nama = String(row[0] || '').trim();
         if (!nama || nama === 'Customer') return;
-        const lim = row[CUST_COL_YEL1 - 1], cat = row[CUST_COL_YEL2 - 1];
-        if (lim === '' && cat === '') return;
+        let lim = row[cLim], cat = row[cCat];
+        // Sanitasi: limit di bawah LIMIT_MIN bukan limit (sisa angka layout lama), catatan berupa
+        // angka juga bukan catatan. Diabaikan supaya sampah tidak mengabadikan diri lewat upsert.
+        if (typeof lim === 'number' && lim < minLimit) lim = '';
+        if (typeof cat === 'number') cat = '';
+        if ((lim === '' || lim == null) && (cat === '' || cat == null)) return;
         const cur = map[nama] || (map[nama] = { limit: '', catatan: '' });
         if (lim !== '' && lim != null) cur.limit = lim;
         if (cat !== '' && cat != null) cur.catatan = cat;

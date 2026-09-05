@@ -180,13 +180,22 @@ function collectTurunYellow(files) {
     try {
       const sh = ss.getSheetByName(CONFIG.TABS.TURUN_BUKU);
       if (!sh) return;
-      const last = sh.getLastRow();
+      const last = sh.getLastRow(), lastCol = sh.getLastColumn();
       if (last < 2) return;
-      const vals = sh.getRange(1, 1, last, TB_SPAN).getValues();
+      const vals = sh.getRange(1, 1, last, lastCol).getValues();
+      // Kolom dicari LEWAT NAMA HEADER (lihat catatan di collectCustomerYellow, bug 2026-09-05).
+      let cNama = -1, cSt = -1, cCat = -1;
       vals.forEach(function(row) {
-        const nama = String(row[TB_COL['Customer'] - 1] || '').trim();
+        if (cSt >= 0) return;
+        const i = row.indexOf('Status Konversi');
+        if (i < 0) return;
+        cSt = i; cCat = row.indexOf('Catatan'); cNama = row.indexOf('Customer');
+      });
+      if (cSt < 0 || cCat < 0 || cNama < 0) return;
+      vals.forEach(function(row) {
+        const nama = String(row[cNama] || '').trim();
         if (!nama || nama === 'Customer') return;
-        const st = row[TB_COL_YEL1 - 1], ct = row[TB_COL_YEL2 - 1];
+        const st = row[cSt], ct = row[cCat];
         if ((st === '' || st == null) && (ct === '' || ct == null)) return;
         map[nama] = { status: st || '', catatan: ct || '' };
       });

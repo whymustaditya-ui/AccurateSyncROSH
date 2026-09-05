@@ -123,3 +123,34 @@ function _detailReceipts(invId) {
   out.sort(function(a, b) { return a.date - b.date; });
   return out;
 }
+
+// Sekali jalan setelah layout Rapor Customer / Turun Buku berubah (2026-09-05): kosongkan kolom
+// kuning di kedua tab. Sync pertama pasca-perubahan sempat membaca kolom lama sebagai 🟡 dan
+// menuliskannya kembali ke posisi baru, jadi sampahnya perlu dihapus sekali; sesudah itu pembaca
+// header-aware + sanitasi menjaganya. Hanya menghapus Limit Disetujui/Catatan Nathan dan
+// Status Konversi/Catatan yang SUDAH ada; kalau Nathan pernah mengisi, catat dulu sebelum jalan.
+function clearYellowAfterLayoutChangeNow() {
+  const ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  const wipe = function(tabName, headers) {
+    const sh = ss.getSheetByName(tabName);
+    if (!sh || sh.getLastRow() < 2) return 0;
+    const vals = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+    let n = 0;
+    vals.forEach(function(row, i) {
+      const cols = headers.map(function(h) { return row.indexOf(h); });
+      if (cols.some(function(c) { return c < 0; })) return;
+      // baris header ditemukan → bersihkan kolom itu dari baris berikutnya sampai baris kosong pertama
+      let r = i + 2;
+      while (r <= vals.length && String(vals[r - 1][0] || '').trim() !== '') {
+        cols.forEach(function(c) { sh.getRange(r, c + 1).clearContent(); });
+        n++; r++;
+      }
+    });
+    return n;
+  };
+  const a = wipe(CONFIG.TABS.CUSTOMER, ['Limit Disetujui', 'Catatan Nathan']);
+  const b = wipe(CONFIG.TABS.TURUN_BUKU, ['Status Konversi', 'Catatan']);
+  Logger.log('Kolom kuning dibersihkan: Rapor ' + a + ' baris, Turun Buku ' + b + ' baris. Sekarang Run Full Sync.');
+  try { SpreadsheetApp.getUi().alert('Kolom kuning dibersihkan: Rapor ' + a + ' baris, Turun Buku ' + b + ' baris.
+Sekarang jalankan Run Full Sync now.'); } catch (e) {}
+}

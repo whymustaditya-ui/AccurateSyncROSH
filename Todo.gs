@@ -120,9 +120,13 @@ function writeTodoTab(todo, role) {
     rules.push(R().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges([rng]).build());
   };
   const styleRows = function(first, n, C) {
-    sh.getRange(first, 1, n, SPAN).setVerticalAlignment('top')
+    // Satu baris = satu tinggi (24px). Kolom Pesan di-CLIP, bukan wrap: pesan panjang terpotong di
+    // sel, isi utuh tetap ada di link Kirim WA dan di formula bar kalau di-klik. Tanpa ini tiap
+    // baris melar setinggi pesannya dan daftar 50 baris jadi 3 layar (permintaan Bro 2026-09-05).
+    sh.getRange(first, 1, n, SPAN).setVerticalAlignment('middle')
       .setBorder(true, true, true, true, true, true, UI.BORDER, SpreadsheetApp.BorderStyle.SOLID);
-    sh.getRange(first, C['Pesan'], n, 1).setWrap(true);
+    sh.getRange(first, C['Pesan'], n, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    sh.setRowHeights(first, n, 24);
     sh.getRange(first, C['📲 Kirim WA'], n, 1).setHorizontalAlignment('center');
     tierRules(sh.getRange(first, C['Loyalitas (4bln)'], n, 1));
   };
@@ -198,7 +202,8 @@ function writeTodoTab(todo, role) {
     '(H-3 dan H0 pengingat, H+3 tindak lanjut, H+7 isyarat halus order berikutnya menunggu pelunasan, H+14 terakhir sebelum handover). ' +
     'SAPA LAGI: customer yang sedang ditagih atau punya faktur lewat jatuh tempo TIDAK ada di sini, selesaikan tagihannya dulu; ' +
     'daftar dibatasi ' + (CONFIG.TODO_SAPA_MAX || 30) + ' customer per hari, pelanggan A/B didahulukan. ' +
-    'Baris tanpa No. Telp (POS/online) tidak punya link Kirim WA. Pesan bisa di-copy dari kolom Pesan kalau mau diedit dulu.');
+    'Baris tanpa No. Telp (POS/online) tidak punya link Kirim WA. Kolom Pesan sengaja dipotong supaya baris tetap pendek; ' +
+    'klik selnya untuk melihat teks utuh di formula bar, atau copy dari sana kalau mau diedit dulu.');
 
   const widths = { 'Customer': 200, 'Sales': 110, 'Reminder': 150, 'Jml Faktur': 80, 'Total Tagihan': 130,
                    'Order Terakhir': 105, 'Hari Diam': 80, 'Bucket': 80, 'No. Telp': 125,

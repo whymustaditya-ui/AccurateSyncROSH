@@ -224,7 +224,7 @@ function writeHealthSections(sh, startRow, m, span) {
 
   // ── TOP DEBITUR ──
   r = uiSection(sh, r, SPAN, 'TOP DEBITUR — 10 outstanding terbesar', UI.RED);
-  uiHeaderRow(sh, r, ['Customer', 'Outstanding', 'Umur Tertua', 'Tier (4bln)']); r += 1;
+  uiHeaderRow(sh, r, ['Customer', 'Outstanding', 'Umur Tertua', 'Loyalitas (4bln)']); r += 1;
   if (!m.topDebtors.length) {
     sh.getRange(r, 1, 1, SPAN).merge().setValue('Tidak ada piutang terbuka. 🎉')
       .setFontColor(UI.NOTE).setFontStyle('italic');

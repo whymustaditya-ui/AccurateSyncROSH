@@ -18,7 +18,7 @@
  */
 
 var TB_HEADERS = [
-  'Gelombang', 'Customer', 'Sales', 'Tier (4bln)', 'Skor Bayar', 'Telat Terlama (hari)',
+  'Gelombang', 'Customer', 'Sales', 'Loyalitas (4bln)', 'Skor Bayar', 'Telat Terlama (hari)',
   'AR Dibebaskan', 'Kumulatif', 'Omzet Berisiko / bln', 'Alasan', 'Status'
 ];
 var TB_SPAN     = TB_HEADERS.length;   // 11

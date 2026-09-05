@@ -21,7 +21,7 @@
 var COLLECTED_HEADERS = [
   'No. Invoice', 'Customer', 'Tgl Faktur', 'Tgl JT', 'Nilai Invoice',
   'Dibayar (bln ini)', 'Tgl Bayar Terakhir', 'Total Dibayar', 'Sisa', 'Status',
-  '📄 Invoice', 'Tier (4bln)'
+  '📄 Invoice', 'Loyalitas (4bln)'
 ];
 var COLLECTED_SPAN = COLLECTED_HEADERS.length;   // 12
 var COLLECTED_MONEY_COLS = [5, 6, 8, 9];
@@ -187,7 +187,7 @@ function writeCollectedTab(months) {
   sh.setColumnWidth(6, 130);
   sh.setColumnWidth(10, 120);
   sh.setColumnWidth(11, 90);   // 📄 Invoice
-  sh.setColumnWidth(12, 190);  // Tier (4bln)
+  sh.setColumnWidth(12, 190);  // Loyalitas (4bln)
 
   // View-only: Deden adalah Viewer di file-nya; kunci warning-only, tanpa kolom 🟡.
   const prot = sh.protect().setDescription('Faktur Collected — otomatis dari Accurate');

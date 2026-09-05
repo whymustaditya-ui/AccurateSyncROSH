@@ -119,6 +119,16 @@ const CONFIG = {
 
   // ── Flow Penagihan Fase 0 (StopSupply.gs / Route.gs dispatch / Pesan.gs batch) ──
   STOP_SUPPLY_DAYS:    1,   // invoice belum bayar ≥ H+1 (lewat jatuh tempo) → customer flag HOLD (Nathan tahan SO baru)
+  // Jadwal tindakan penagihan setelah lewat jatuh tempo (Panduan Sales v1.0 bagian 6). Dibaca
+  // StopSupply.gs + Status.gs untuk kolom "Tindakan Berikutnya": ambang hari MINIMAL → teks.
+  // Urut naik; yang dipakai = ambang terbesar yang ≤ hari telat. Ubah teks di sini, bukan di writer.
+  STOP_SUPPLY_STEPS: [
+    [1,  'H+1 · Sales telepon/WA pemilik, minta tanggal transfer'],
+    [3,  'H+3 · Sales kunjungi toko kalau belum ada transfer'],
+    [7,  'H+7 · Tempo dicabut, COD 60 hari setelah lunas'],
+    [14, 'H+14 · Surat Peringatan dari owner'],
+    [30, 'H+30 · Owner ambil alih penuh, sales lepas']
+  ],
   PENAGIHAN_WINDOW_MAX: 14, // tab Pesan cakup faktur daysPastDue ∈ [-1,14] (window Deden pra-handover)
   // Aturan dispatch kunjungan (dari diagram flow). Prioritas: Solo > Nearest > Rute > Antri.
   DISPATCH: {
@@ -197,8 +207,8 @@ const CONFIG = {
     // — kelas khusus (tidak ikut dirangking / tidak diberi limit) —
     COD_TEMPO_MAX:      1,     // (dueDate−transDate) ≤1 hari di SEMUA faktur → kelas TUNAI (belum pernah diuji kredit)
     DORMANT_MONTHS:     6,     // tak ada faktur dalam 6 bln → DORMAN
-    LIMIT_BARU:         5000000,
-    TEMPO_BARU:         0,     // customer baru: COD dulu
+    LIMIT_BARU:         0,     // customer baru: bayar dulu, tanpa limit sampai 3 transaksi lancar (SOP Tahap 0)
+    TEMPO_BARU:         0,
 
     // — sisi margin (window dibatasi _SkuSalesCache, maks RESTOCK.WINDOW_MONTHS) —
     // DIBUKA 2026-09-02 setelah diagVendorPrice(): cek ΣlineTotal vs subTotal 10/10 selisih Rp0
@@ -267,12 +277,22 @@ const CONFIG = {
 
     PD: { LANCAR: 0.01, D30: 0.03, D60: 0.08, D90: 0.18, D180: 0.35, D180PLUS: 0.60 },  // cadangan risiko
 
-    // — saran limit & tempo —
+    // — saran limit & tempo (Panduan Sales v1.0, tabel Tiering, berlaku 2026-10-01) —
+    // Satu tempo untuk semua customer kredit: 14 hari. Tidak ada tempo 21/30. Yang membedakan
+    // customer bagus dan biasa adalah LIMIT, bukan panjang tempo. RISIKO/BAHAYA = bayar dulu.
+    // Peta ke istilah SOP: AMAN = T2 (Tempo Plus, limit 1,5x belanja bulanan, ditetapkan owner
+    // lewat kolom Limit Disetujui), HATI = T1 (Tempo, limit 1x belanja bulanan, maks Rp10jt),
+    // RISIKO & BAHAYA = T0 (bayar dulu). Di sheet tetap memakai vonis 🟢🟡🟠🔴 yang sudah dikenal,
+    // bukan kode T0/T1/T2, supaya tidak ada dua kamus untuk satu konsep.
     LIMIT_WINDOW_MONTHS: 6,
-    HEADROOM:   { AMAN: 1.5, HATI: 1.2, RISIKO: 1.0, BAHAYA: 0 },
-    TEMPO_BAND: { AMAN: 30,  HATI: 21,  RISIKO: 14,  BAHAYA: 0 },
+    TEMPO_BAND: { AMAN: 14, HATI: 14, RISIKO: 0, BAHAYA: 0 },
     TEMPO_ONLY_TIGHTEN: true,  // mesin cuma boleh MEMPERKETAT tempo; melonggarkan = keputusan orang
-    TEMPO_MAX:   30,
+    TEMPO_MAX:   14,
+    // Limit = belanja bulanan × pengali band, lalu diplafon per band. Sebelum 2026-09-05 rumusnya
+    // belanja × tempo/30 × headroom; dengan tempo 14 rumus lama diam-diam membagi dua semua limit,
+    // jadi diganti ke bentuk SOP yang eksplisit.
+    LIMIT_MULT: { AMAN: 1.5, HATI: 1.0, RISIKO: 0, BAHAYA: 0 },
+    LIMIT_CAP:  { HATI: 10000000 },   // T1 maks Rp10jt (SOP). AMAN tanpa plafon khusus: LIMIT_MAX + CONC_PCT tetap berlaku
     LIMIT_MIN:   2000000,
     LIMIT_MAX:   150000000,
     LIMIT_ROUND: 500000,
@@ -297,7 +317,8 @@ const CONFIG = {
     CARA_BACA:     '📖 Cara Baca',          // onboarding guide (static, rebuilt each sync)
     TODO:          '📌 To-Do — Peringatan', // daily action list: penagihan JT (H-1→H+14, 4-touch) + follow-up reaktivasi (dormancy)
     PESAN:         '✉️ Pesan Penagihan',     // ready-to-send WA collection messages, group-by-customer (Pesan.gs, master-only)
-    STOP_SUPPLY:   '⛔ Stop Supply (HOLD)',   // customer lewat jatuh tempo belum bayar → Nathan tahan SO baru (StopSupply.gs; master + file Deden discoped)
+    STOP_SUPPLY:   '⛔ Stop Supply (HOLD)',   // customer lewat jatuh tempo belum bayar → Nathan tahan SO baru (StopSupply.gs, master-only sejak 2026-09-05)
+    STATUS_CUST:   '🚦 Status Customer',       // gate harian sales: Boleh Supply? + Sisa Limit per customer (Status.gs; master + file Deden discoped)
     KONTAK:        '📇 Kontak Customer',      // directory semua customer: nama + No WA + No Bisnis (Kontak.gs, master-only)
     CUSTOMER:      '🧭 Rapor Customer',       // gate order baru + saran limit & tempo per customer (Customer.gs, master-only)
     TURUN_BUKU:    '📉 Turun Buku Piutang',   // program turun AR ke target + NPL + gelombang cabut tempo (TurunBuku.gs, master-only)
@@ -348,13 +369,16 @@ TABS_DEDEN[CONFIG.TABS.INVOICE_SALES] = '🧾 Tagihan Kamu';         // yang mas
 TABS_DEDEN[CONFIG.TABS.POOL_B]        = '🔵 Faktur Ongoing AR';    // sudah lewat H+14, ditangani Ade, dia pantau
 TABS_DEDEN[CONFIG.TABS.THP_SALES]     = '📊 KPI & Gaji Bulan Ini';
 TABS_DEDEN[CONFIG.TABS.THP_HISTORY]   = '📈 Riwayat Gaji';
-TABS_DEDEN[CONFIG.TABS.STOP_SUPPLY]   = '⛔ Customer Ditahan';       // customer kamu yang order barunya di-HOLD
+TABS_DEDEN[CONFIG.TABS.STATUS_CUST]   = '🚦 Status Customer';       // boleh supply? + sisa limit, semua customer kamu
 // CONFIG.TABS.COLLECTED sengaja TIDAK di-alias — '💰 Faktur Collected' dipakai apa adanya.
 
 // Migrasi nama yang sempat dipakai lalu diganti. _applyTabAlias me-rename tab lama ini di
 // tempat, jadi tak ada tab yatim tertinggal di file Deden. Boleh dihapus setelah satu sync.
 TABS_DEDEN['⏰ Lewat ke Ade'] = '🔵 Faktur Ongoing AR';
 TABS_DEDEN['💰 Uang Masuk']   = CONFIG.TABS.COLLECTED;
+// 2026-09-05: ⛔ Customer Ditahan (Stop Supply versi Deden) digantikan 🚦 Status Customer, yang
+// memuat SEMUA customer dia (bukan cuma yang ditahan). Tab lama di-rename di tempat lalu ditimpa.
+TABS_DEDEN['⛔ Customer Ditahan'] = CONFIG.TABS.STATUS_CUST;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MENU
@@ -380,7 +404,7 @@ function onOpen() {
     .addItem('Refresh Restock (item + SKU sales)', 'refreshSkuSalesNow')
     .addItem('Refresh Kontak Customer', 'refreshKontakNow')
     .addItem('Rebuild Kontak cache (wipe + refetch)', 'rebuildKontakCacheNow')
-    .addItem('Refresh Rapor Customer + Turun Buku', 'refreshCustomerNow')
+    .addItem('Refresh Rapor Customer + Turun Buku + Stop Supply + Status', 'refreshCustomerNow')
     .addItem('Diag vendorPrice (cek sebelum buka margin)', 'diagVendorPrice')
     .addItem('Diag jual di bawah modal', 'diagBelowCost')
     .addItem('Diag kontak fields (WA/telp)', 'diagKontakFields')

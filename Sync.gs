@@ -91,7 +91,7 @@ function fullSync() {
     const dueReminders = buildDueReminders(invoices, today);    // penagihan JT (H-1 → H+14, 4-touch)
     const followUps    = buildFollowUpReminders(invoices, today); // reaktivasi (dormancy)
     const penagihanBatch = buildPenagihanBatch(invoices, today);  // pesan WA group-by-customer (H-1 → H+14)
-    const stopSupply     = buildStopSupply(invoices, today);      // customer lewat jatuh tempo → HOLD order baru
+    // ⛔ Stop Supply dibangun BELAKANGAN (setelah Rapor Customer) karena kode LIM butuh limit per customer.
     const sales        = computeSalesKpi(invoices);
     const ar           = computeArKpi(invoices, onboard, today);
 
@@ -133,7 +133,6 @@ function fullSync() {
     writeCaraBacaTab();                       // 📖 onboarding guide (static, rebuilt each sync)
     writeTodoTab(dueReminders, followUps);    // 📌 daily action list
     writePesanTab(penagihanBatch);            // ✉️ pesan WA siap kirim, group-by-customer (master-only)
-    writeStopSupplyTab(stopSupply, 'master'); // ⛔ daftar HOLD order (lewat jatuh tempo) untuk Nathan
     // 📇 Kontak Customer (master-only) — directory semua customer (nama/WA/telp bisnis).
     // FAIL-SOFT: harvest time-budgeted (drain bertahap); gagal harvest ≠ gagal sync.
     try {
@@ -192,6 +191,23 @@ function fullSync() {
       }
     }
 
+    // ⛔ Stop Supply (master-only) + 🚦 Status Customer (master, lalu Deden di bawah). Keduanya
+    // membaca limit dari `rapor` (_limitBerlaku) supaya tiga tab tak pernah beda angka; rapor null
+    // → Stop Supply tetap jalan tanpa kode LIM, Status Customer dilewati (tak ada sumber angka).
+    try { writeStopSupplyTab(buildStopSupply(invoices, today, rapor)); }
+    catch (e) {
+      Logger.log('Stop Supply dilewati: ' + e.message);
+      try { _log('WARN', 'Stop Supply dilewati: ' + e.message); } catch (e2) {}
+    }
+    const custStatus = rapor ? buildCustomerStatus(rapor) : null;
+    if (custStatus) {
+      try { writeCustomerStatusTab(custStatus, 'master'); }
+      catch (e) {
+        Logger.log('Status Customer dilewati: ' + e.message);
+        try { _log('WARN', 'Status Customer dilewati: ' + e.message); } catch (e2) {}
+      }
+    }
+
     writeSummaryTab(ctx, 'master', health);
     orderTabs();                             // arrange tabs L→R for the 3 audiences
 
@@ -224,13 +240,18 @@ function fullSync() {
         'Customer kamu yang tagihannya sudah lewat H+14 dan pindah ke ' + CONFIG.AR_OFFICER_NAME +
         '. Penagihan jadi tugas ' + CONFIG.AR_OFFICER_NAME + '; tab ini untuk kamu pantau saja (lihat, tidak diisi).',
         true);                               // viewOnly — semua kolom read-only di file Deden
-      // ⛔ Stop Supply — versi Deden: SAMA persis dengan tab master tapi input invoice-nya
-      // di-scope ke faktur atas nama dia dulu, jadi agregat per customer hanya menghitung
-      // outstanding miliknya (customer yang nunggak cuma di sales lain tidak muncul).
+      // 🚦 Status Customer — versi Deden: baris yang sama dengan master, disaring ke customer
+      // yang salesman-nya dia (_bySalesman pada baris status). Outstanding & limit tetap
+      // level customer (bukan cuma faktur dia): customer yang ditahan ya ditahan, siapa pun
+      // yang jual. Menggantikan ⛔ Customer Ditahan (2026-09-05) yang cuma memuat yang ditahan.
       // FAIL-SOFT: tab tambahan tak boleh meng-abort sync file Deden.
-      try {
-        writeStopSupplyTab(buildStopSupply(_bySalesman(invoices, CONFIG.SALES_NAME), today), 'deden');
-      } catch (e) { Logger.log('Stop Supply (Deden) dilewati: ' + e.message); }
+      if (custStatus) {
+        try {
+          writeCustomerStatusTab(
+            { rows: _bySalesman(custStatus.rows, CONFIG.SALES_NAME), budget: custStatus.budget, budgetSrc: custStatus.budgetSrc },
+            'deden');
+        } catch (e) { Logger.log('Status Customer (Deden) dilewati: ' + e.message); }
+      }
       // 💰 Faktur Collected — rincian faktur di balik angka Collected (bulan lalu + bulan ini).
       // FAIL-SOFT: tab tambahan tak boleh meng-abort sync file Deden (pola blok Restock/Kontak).
       try {
@@ -1055,7 +1076,7 @@ function writeTodoTab(due, followup) {
 
   // ── SECTION A — PENAGIHAN JATUH TEMPO ──
   r = uiSection(sh, r, SPAN, 'PENAGIHAN — Jatuh Tempo (H-1 → H+14, belum bayar)', UI.RED);
-  uiHeaderRow(sh, r, ['No. Invoice', 'Customer', 'Sales', 'Jatuh Tempo', 'Reminder', 'Outstanding', 'No. Telp', 'Tier (4bln)']);
+  uiHeaderRow(sh, r, ['No. Invoice', 'Customer', 'Sales', 'Jatuh Tempo', 'Reminder', 'Outstanding', 'No. Telp', 'Loyalitas (4bln)']);
   r += 1;
   if (due.length) {
     const aStart = r;
@@ -1082,7 +1103,7 @@ function writeTodoTab(due, followup) {
 
   // ── SECTION B — FOLLOW-UP REAKTIVASI ──
   r = uiSection(sh, r, SPAN, 'FOLLOW-UP — Reaktivasi Customer (sejak order terakhir)', UI.BLUE);
-  uiHeaderRow(sh, r, ['Customer', 'Sales', 'Order Terakhir', 'Hari Sejak Order', 'Bucket', 'Outstanding', 'No. Telp', 'Tier (4bln)']);
+  uiHeaderRow(sh, r, ['Customer', 'Sales', 'Order Terakhir', 'Hari Sejak Order', 'Bucket', 'Outstanding', 'No. Telp', 'Loyalitas (4bln)']);
   r += 1;
   if (followup.length) {
     const bStart = r;
@@ -1122,7 +1143,7 @@ function writeTodoTab(due, followup) {
   sh.setColumnWidth(5, 150);
   sh.setColumnWidth(6, 130);
   sh.setColumnWidth(7, 140);
-  sh.setColumnWidth(8, 190); // Tier (4bln)
+  sh.setColumnWidth(8, 190); // Loyalitas (4bln)
   sh.setFrozenRows(2); // banner + subtitle
   return sh;
 }
@@ -1137,13 +1158,13 @@ function writeTodoTab(due, followup) {
 //   13 Tgl Bayar🔴 14 Masuk Kas (bln ini)🔴 15 Aging saat Collect🔴 16 Komisi (auto)🔴 17 Status🔴
 //   18 Alamat Customer🔴 19 No. Telp🔴  (from Accurate customer master)
 //   20 📄 Invoice🔴  (HYPERLINK to the Faktur PDF web app — Faktur.gs)
-//   21 Tier (4bln)🔴  (loyalty tier A–D · count · value — computeCustomerTiers)
+//   21 Loyalitas (4bln)🔴  (loyalty tier A–D · count · value — computeCustomerTiers)
 var POOL_HEADERS = [
   'No. Invoice', 'Customer', 'Nilai Invoice', 'Tgl JT', 'Tgl Handover (H+15)',
   'Piutang Awal', 'Outstanding', 'Hari Sejak Handover',
   'Channel', 'Hasil Negosiasi', 'Tgl Follow-up Terakhir', 'Bukti Transfer',
   'Tgl Bayar', 'Masuk Kas (bln ini)', 'Aging saat Collect', 'Komisi (auto)', 'Status',
-  'Alamat Customer', 'No. Telp', '📄 Invoice', 'Tier (4bln)'
+  'Alamat Customer', 'No. Telp', '📄 Invoice', 'Loyalitas (4bln)'
 ];
 var POOL_YELLOW_COLS = [9, 10, 11, 12]; // human-filled, preserved across syncs
 
@@ -1219,7 +1240,7 @@ function writePoolTab(name, rows, pool, preservedOverride, subtitleOverride, vie
       r.komisi, r.status,
       r.alamat, r.noTlp,
       fakturLinkFormula(r.id, r.number, r.customerId),  // col 20 — 📄 PDF link (blank pre-deploy)
-      r.tierText                          // col 21 — Tier (4bln)
+      r.tierText                          // col 21 — Loyalitas (4bln)
     ];
   });
   if (matrix.length) {
@@ -1285,7 +1306,7 @@ function writePoolTab(name, rows, pool, preservedOverride, subtitleOverride, vie
   sh.setColumnWidth(18, 280);  // Alamat Customer
   sh.setColumnWidth(19, 140);  // No. Telp
   sh.setColumnWidth(20, 90);   // 📄 Invoice
-  sh.setColumnWidth(21, 190);  // Tier (4bln)
+  sh.setColumnWidth(21, 190);  // Loyalitas (4bln)
 
   // 5) Range protection — lock the 🔴 script-owned columns; leave only the
   //    four 🟡 columns (9–12, data rows) editable for Ade. Owner keeps full access.
@@ -1306,7 +1327,7 @@ function writePoolTab(name, rows, pool, preservedOverride, subtitleOverride, vie
 function writeInvoiceSalesTab(list) {
   const sh = _tab(CONFIG.TABS.INVOICE_SALES,
     ['No. Invoice', 'Customer', 'Sales', 'Jatuh Tempo', 'Hari Lewat JT',
-     'Outstanding', 'Status', 'No. Telp', '📄 Invoice', 'Tier (4bln)']);
+     'Outstanding', 'Status', 'No. Telp', '📄 Invoice', 'Loyalitas (4bln)']);
   const rows = list.map(function(i) {
     return [i.number, i.customer, i.salesman || '(POS)', fmtDate(i.dueDate),
             i.daysPastDue == null ? '' : i.daysPastDue, i.outstanding, i.statusLabel,
@@ -1330,7 +1351,7 @@ function writeInvoiceSalesTab(list) {
   ]);
   sh.setColumnWidth(8, 130);
   sh.setColumnWidth(9, 90);    // 📄 Invoice
-  sh.setColumnWidth(10, 190);  // Tier (4bln)
+  sh.setColumnWidth(10, 190);  // Loyalitas (4bln)
   _writeSidePanel(sh, 12, list, '📊 Ringkasan Tagihan Sales');  // sc=12; col 9 link, 10 tier, 11 spacer
 }
 
@@ -1338,7 +1359,7 @@ function writeInvoiceSalesTab(list) {
 function writeInvoiceLainTab(list) {
   const sh = _tab(CONFIG.TABS.TAGIHAN_LAIN,
     ['No. Invoice', 'Customer', 'Sales / Sumber', 'Jatuh Tempo', 'Hari Lewat JT',
-     'Outstanding', 'Status', 'No. Telp', '📄 Invoice', 'Tier (4bln)']);
+     'Outstanding', 'Status', 'No. Telp', '📄 Invoice', 'Loyalitas (4bln)']);
   const rows = list.map(function(i) {
     return [i.number, i.customer, i.salesman || '(POS / online)', fmtDate(i.dueDate),
             i.daysPastDue == null ? '' : i.daysPastDue, i.outstanding, i.statusLabel,
@@ -1362,7 +1383,7 @@ function writeInvoiceLainTab(list) {
   ]);
   sh.setColumnWidth(8, 130);
   sh.setColumnWidth(9, 90);    // 📄 Invoice
-  sh.setColumnWidth(10, 190);  // Tier (4bln)
+  sh.setColumnWidth(10, 190);  // Loyalitas (4bln)
   _writeSidePanel(sh, 12, list, '📊 Ringkasan Tagihan Lain');  // sc=12; col 9 link, 10 tier, 11 spacer
 }
 

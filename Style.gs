@@ -110,7 +110,8 @@ function writeCaraBacaTab() {
         [CONFIG.TABS.SUMMARY, 'Ringkasan semua tab + kesehatan bisnis (AR aging, DSO, collection, tren harian) dalam satu layar', 'Pantau strategis'],
         [CONFIG.TABS.TODO, 'To-do harian: penagihan jatuh tempo (H-1→H+3) & follow-up customer pasif', 'Aksi hari ini'],
         [CONFIG.TABS.PESAN, 'Pesan WA penagihan siap kirim, 1 pesan/pelanggan (gabung faktur H-1→H+14)', 'Copy / tap Kirim WA'],
-        [CONFIG.TABS.STOP_SUPPLY, 'Customer lewat jatuh tempo belum bayar — Nathan tahan order baru sampai lunas', 'HOLD order'],
+        [CONFIG.TABS.STOP_SUPPLY, 'Customer lewat jatuh tempo belum bayar — Nathan tahan order baru sampai lunas. Alasan (OVD/LIM/STOP), sejak kapan, tindakan berikutnya', 'HOLD order (Nathan)'],
+        [CONFIG.TABS.STATUS_CUST, 'Gate harian sales: Boleh Supply? YA/TIDAK, cara bayar, limit & sisa limit tiap customer. Versi Deden hanya customer dia', 'Cek sebelum buat SO'],
         [CONFIG.TABS.CUSTOMER, 'Rapor per customer: layak dikasih order baru atau tidak, saran limit kredit & tempo, margin bersih setelah biaya modal', 'Gate order baru'],
         [CONFIG.TABS.TURUN_BUKU, 'Program menurunkan piutang berjalan ke target: jalur bulanan, NPL, gelombang cabut tempo, siapa ditagih dulu', 'Kemudi bulanan'],
         [CONFIG.TABS.POOL_A, 'Stuck AR — backlog lama, frozen per hari onboard', 'Burn-down ke Rp0'],
@@ -164,15 +165,16 @@ function writeCaraBacaTab() {
         ['Penalty aging naik bucket', '31–75 hr: ' + rupiah(CONFIG.AR_PENALTY_REG_TO_AGING1) + ' · >75 hr: ' + rupiah(CONFIG.AR_PENALTY_AGING1_TO_AGING2) + ' / invoice', 'Auto-flag; gugur bila ada follow-up terdokumentasi'],
         ['Akses', me + ': edit kolom 🟡 saja · Owner: full', 'Kolom 🔴 dikunci otomatis oleh script']
       ] },
-    { band: 'KLASIFIKASI CUSTOMER (TIER) — ' + CONFIG.CUST_TIER.WINDOW_MONTHS + ' bulan terakhir', color: UI.GOLD,
-      header: ['Tier', 'Kriteria (jumlah invoice)', 'Maksud'],
+    { band: 'LOYALITAS CUSTOMER (A/B/C/D) — ' + CONFIG.CUST_TIER.WINDOW_MONTHS + ' bulan terakhir', color: UI.GOLD,
+      header: ['Loyalitas', 'Kriteria (jumlah invoice)', 'Maksud'],
       rows: [
         ['A', '≥ ' + CONFIG.CUST_TIER.A_MIN + '×', 'Paling loyal — tagih paling lembut, jaga hubungan', UI.T_GREEN],
         ['B', CONFIG.CUST_TIER.B_MIN + '–' + (CONFIG.CUST_TIER.A_MIN - 1) + '×', 'Loyal — pendekatan halus', UI.BLUE_SOFT],
         ['C', CONFIG.CUST_TIER.C_MIN + '–' + (CONFIG.CUST_TIER.B_MIN - 1) + '×', 'Sedang', UI.T_AMBER],
         ['D', '1×', 'Baru / jarang — boleh lebih tegas', UI.T_GREY],
         ['(kosong)', '0× dalam ' + CONFIG.CUST_TIER.WINDOW_MONTHS + ' bln', 'Tidak aktif di window ini'],
-        ['Format kolom', 'Huruf · jumlah transaksi · nilai (mis. "B · 7× · Rp45.000.000")', 'Info saja — tidak mengubah komisi/penalty']
+        ['Format kolom', 'Huruf · jumlah transaksi · nilai (mis. "B · 7× · Rp45.000.000")', 'Info saja — tidak mengubah komisi/penalty'],
+        ['Beda dengan kredit', 'Loyalitas = seberapa SERING dia order. Boleh dikasih tempo atau tidak = kolom Keputusan di Rapor Customer / Boleh Supply? di Status Customer. Dua hal berbeda.', 'Customer A bisa saja ditahan']
       ] },
     { band: 'TAKE-HOME PAY', color: UI.INK,
       header: ['Komponen', 'Nilai', 'Catatan'],
@@ -222,7 +224,7 @@ function orderTabs() {
   const ss = _ss();
   const order = [
     CONFIG.TABS.CARA_BACA, CONFIG.TABS.SUMMARY, CONFIG.TABS.RESTOCK, CONFIG.TABS.TODO,
-    CONFIG.TABS.PESAN, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.CUSTOMER, CONFIG.TABS.TURUN_BUKU,
+    CONFIG.TABS.PESAN, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.STATUS_CUST, CONFIG.TABS.CUSTOMER, CONFIG.TABS.TURUN_BUKU,
     CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.RUTE,
     CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.COLLECTED, CONFIG.TABS.TAGIHAN_LAIN, CONFIG.TABS.KONTAK,
     CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG

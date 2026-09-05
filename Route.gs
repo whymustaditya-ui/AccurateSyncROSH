@@ -30,11 +30,11 @@ var ROUTE_UNZONED = '(Belum dizonakan)';
 // 13-column schema. Key = Customer (col 4, the only stable value readable back).
 //   1 Zona🟡 2 Zona(auto)🔴 3 Urutan🔴 4 Customer🔴(KEY) 5 Alamat🔴 6 Pin Maps🟡
 //   7 Outstanding🔴 8 Umur Tertua🔴 9 No. Telp🔴
-//   10 Status Kunjungan🟡 11 Tgl Kunjungan🟡 12 Hasil🟡 13 Tier (4bln)🔴
+//   10 Status Kunjungan🟡 11 Tgl Kunjungan🟡 12 Hasil🟡 13 Loyalitas (4bln)🔴
 var ROUTE_HEADERS = [
   'Zona / Kecamatan', 'Zona (auto)', 'Urutan', 'Customer', 'Alamat', 'Pin Maps (link)',
   'Outstanding', 'Umur Tertua (hari)', 'No. Telp',
-  'Status Kunjungan', 'Tgl Kunjungan', 'Hasil', 'Tier (4bln)'
+  'Status Kunjungan', 'Tgl Kunjungan', 'Hasil', 'Loyalitas (4bln)'
 ];
 var ROUTE_SPAN        = ROUTE_HEADERS.length; // 13
 var ROUTE_HROW        = 3;   // column-header row (banner=1, subtitle=2)
@@ -495,7 +495,7 @@ function writeRouteTab(plan, yMap) {
   sh.setColumnWidth(4, 190); sh.setColumnWidth(5, 260); sh.setColumnWidth(6, 200);
   sh.setColumnWidth(7, 130); sh.setColumnWidth(8, 95);  sh.setColumnWidth(9, 130);
   sh.setColumnWidth(10, 150); sh.setColumnWidth(11, 110); sh.setColumnWidth(12, 220);
-  sh.setColumnWidth(13, 190); // Tier (4bln)
+  sh.setColumnWidth(13, 190); // Loyalitas (4bln)
   return sh;
 }
 

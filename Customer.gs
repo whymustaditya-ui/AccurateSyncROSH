@@ -24,7 +24,7 @@
  */
 
 var CUST_HEADERS = [
-  'Customer', 'Sales', 'Tier (4bln)', 'Keputusan', 'Skor Bayar', 'Risiko',
+  'Customer', 'Sales', 'Loyalitas (4bln)', 'Keputusan', 'Skor Bayar', 'Risiko',
   'Rata2 Telat (hari)', 'Lewat H+15', 'Nunggak Sekarang', 'Telat Terlama (hari)',
   'Belanja / bln', 'Cakupan Data', 'Omzet Tercakup', 'Margin Kotor', 'Margin Kotor %',
   'Biaya Modal', 'Margin Bersih', 'Margin Bersih %', 'Potensi Gagal Bayar',
@@ -426,7 +426,7 @@ function _custVerdict(p, m, sc, arBook) {
                limit: 0, tempo: 0, rank: false };
     }
     if (p.nPaid === 0 && p.invCount <= 1) {
-      return { verdict: '🆕 BARU', alasan: 'Faktur pertama, belum ada riwayat bayar. Mulai dari COD dulu.',
+      return { verdict: '🆕 BARU', alasan: 'Faktur pertama, belum ada riwayat bayar. Bayar dulu sampai 3 transaksi lancar, baru boleh diajukan tempo.',
                limit: C.LIMIT_BARU, tempo: C.TEMPO_BARU, rank: true };
     }
     if (p.nPaid === 0 && p.outstanding <= 0) {
@@ -435,16 +435,20 @@ function _custVerdict(p, m, sc, arBook) {
     }
   }
 
-  // Tempo: mesin hanya boleh MEMPERKETAT. Melonggarkan tetap keputusan orang.
+  // Tempo: satu angka untuk semua customer kredit (TEMPO_MAX 14 hari). Mesin hanya boleh
+  // MEMPERKETAT: customer yang selama ini bertempo 7 hari tidak otomatis naik ke 14.
+  // Melonggarkan tetap keputusan orang.
   let tempo = C.TEMPO_BAND[sc.band];
   if (C.TEMPO_ONLY_TIGHTEN && p.tempoModus != null) tempo = Math.min(tempo, p.tempoModus);
   tempo = clamp(tempo, 0, C.TEMPO_MAX);
 
-  // Limit mentah: belanja sebulan × panjang tempo × kelonggaran sesuai risiko.
-  // Kalimat yang bisa diucapkan ke customer: "cukup untuk satu siklus tempo penuh, plus cadangan".
-  let limit = p.belanjaBulanan * (tempo / 30) * C.HEADROOM[sc.band];
+  // Limit = belanja sebulan × pengali band (SOP tabel Tiering: T1 1x, T2 1,5x), diplafon per band.
+  // Kalimat yang bisa diucapkan ke customer: "kira-kira satu bulan belanja".
+  // Band tanpa tempo (RISIKO/BAHAYA) otomatis limit 0: bayar dulu.
+  let limit = tempo > 0 ? p.belanjaBulanan * (C.LIMIT_MULT[sc.band] || 0) : 0;
   limit = Math.floor(limit / C.LIMIT_ROUND) * C.LIMIT_ROUND;
   if (limit > 0) limit = clamp(limit, C.LIMIT_MIN, C.LIMIT_MAX);
+  if (limit > 0 && C.LIMIT_CAP && C.LIMIT_CAP[sc.band] > 0) limit = Math.min(limit, C.LIMIT_CAP[sc.band]);
   // Aturan konsentrasi: tak boleh ada satu customer yang bisa menjatuhkan ROSH sendirian.
   if (arBook > 0) limit = Math.min(limit, Math.floor(arBook * C.CONC_PCT / C.LIMIT_ROUND) * C.LIMIT_ROUND);
 
@@ -474,7 +478,9 @@ function _custVerdict(p, m, sc, arBook) {
   } else {
     verdict = '🟡 GAS TERBATAS';
     alasan = 'Skor bayar ' + sc.skor + (sc.override ? ', ' + sc.override : '') +
-             '. Boleh jalan tapi jangan lewat Saran Limit, dan pakai tempo ' + tempo + ' hari.';
+             (tempo > 0
+               ? '. Boleh jalan tapi jangan lewat Saran Limit, tempo ' + tempo + ' hari.'
+               : '. Boleh jalan tapi BAYAR DULU (tanpa tempo) sampai catatan bayarnya membaik.');
   }
   if (CONFIG.CUSTOMER.MARGIN_ENABLED) {
     if (!m.ok) {
@@ -1025,9 +1031,9 @@ function _custCaraBaca(sh, row, SPAN) {
     ['Cek kewajaran', 'Angka Margin kotor buku di bagian RINGKAS harus mendekati Gross Profit Margin di laporan Accurate (menu Laporan, Rasio Keuangan Per Bulan). Itu pembanding dari luar sistem ini, jadi kalau keduanya berjauhan, yang salah kemungkinan besar harga beli di master barang, bukan cara customer membayar.'],
     ['Margin Bersih', 'Margin Kotor dikurangi Biaya Modal. Inilah angka yang membongkar pola omzet besar margin tipis: kalau dia bayarnya lambat, biaya modal memakan habis marginnya dan kolom ini jadi merah walaupun omzetnya kelihatan mantap.'],
     ['Potensi Gagal Bayar', 'Perkiraan bagian tagihan customer ini yang berpotensi tidak tertagih, dihitung dari umur tunggakannya: makin tua makin besar porsinya. Ini perkiraan risiko ke depan, bukan kerugian yang sudah terjadi.'],
-    ['Saran Limit', 'Belanja per bulan dikali panjang tempo dibagi 30, dikali kelonggaran sesuai risiko. Artinya cukup untuk satu siklus tempo penuh plus cadangan. Dibatasi maksimal ' + Math.round(CONFIG.CUSTOMER.CONC_PCT * 100) + '% dari total piutang ROSH supaya tidak ada satu customer pun yang bisa menjatuhkan kita sendirian.'],
+    ['Saran Limit', 'Belanja per bulan dikali ' + CONFIG.CUSTOMER.LIMIT_MULT.HATI + ' untuk customer HATI (maks ' + rupiah(CONFIG.CUSTOMER.LIMIT_CAP.HATI) + ') dan dikali ' + CONFIG.CUSTOMER.LIMIT_MULT.AMAN + ' untuk customer AMAN, mengikuti tabel Tiering di Panduan Sales. Customer RISIKO dan BAHAYA tidak diberi limit: bayar dulu. Dibatasi maksimal ' + Math.round(CONFIG.CUSTOMER.CONC_PCT * 100) + '% dari total piutang ROSH supaya tidak ada satu customer pun yang bisa menjatuhkan kita sendirian.'],
     ['Jatah Plafon', 'Saran Limit setelah dibagi rata dari plafon kredit bulan ini. Kalau plafon tidak cukup untuk semua, yang memberi nilai terbesar per rupiah kredit dapat duluan, sisanya kebagian nol dan sementara dilayani COD.'],
-    ['Saran Tempo', 'Tempo yang disarankan. Mesin hanya boleh MEMPERPENDEK tempo, tidak pernah memperpanjang sendiri. Melonggarkan tempo tetap keputusan orang.'],
+    ['Saran Tempo', 'Satu tempo untuk semua customer kredit: ' + CONFIG.CUSTOMER.TEMPO_MAX + ' hari, tidak ada tempo 21 atau 30. Yang membedakan customer bagus dan biasa adalah limitnya, bukan panjang temponya. Mesin hanya boleh MEMPERPENDEK tempo, tidak pernah memperpanjang sendiri; customer yang selama ini 7 hari tetap 7 hari. Faktur yang sudah terbit dengan tempo lama tetap mengikuti tempo lamanya sampai lunas.'],
     ['Saran Naik Harga', 'Kenaikan harga yang dibutuhkan supaya customer ini mencapai margin bersih ' + Math.round(CONFIG.CUSTOMER.TARGET_MARGIN_PCT * 100) + '%. Muncul hanya kalau margin bersihnya tipis. Naikkan harga dulu, lepas belakangan.'],
     ['Kelas khusus', '💵 TUNAI berarti dia belum pernah diberi tempo sama sekali, jadi catatan bayarnya yang sempurna itu belum membuktikan apa apa. 🆕 BARU berarti faktur pertama. ⚪ BELUM DINILAI berarti data belum cukup. 😴 DORMAN berarti tidak ada order ' + CONFIG.CUSTOMER.DORMANT_MONTHS + ' bulan terakhir.'],
     ['Dua kolom kuning', 'Limit Disetujui dan Catatan Nathan diisi tangan dan tidak akan tertimpa sync. Kalau Limit Disetujui diisi, angka itulah yang berlaku, bukan Saran Limit.']
@@ -1256,6 +1262,9 @@ function refreshCustomerNow() {
     const health = computeBusinessHealth(invoices, { invoices: invoices }, today);
     writeTurunBukuTab(buildTurunBuku(rapor, health, today, yTurun));
   }
+  // Dua tab turunan rapor di master. File Deden tetap menunggu sync penuh (butuh TARGET_SS swap).
+  writeStopSupplyTab(buildStopSupply(invoices, today, rapor));
+  writeCustomerStatusTab(buildCustomerStatus(rapor), 'master');
   Logger.log('Rapor Customer selesai · ' + rapor.list.length + ' customer · ' +
     ((new Date() - t0) / 1000).toFixed(1) + 's');
 }

@@ -17,7 +17,7 @@
 
 var PESAN_HEADERS = [
   'Customer', 'No. Telp (62…)', 'Sales', 'Jml Invoice', 'Total Outstanding',
-  'Reminder', 'Tier (4bln)', '📲 Kirim WA', 'Pesan'
+  'Reminder', 'Loyalitas (4bln)', '📲 Kirim WA', 'Pesan'
 ];
 var PESAN_SPAN = PESAN_HEADERS.length; // 9
 var PESAN_HROW = 3;  // column-header row (banner=1, subtitle=2)

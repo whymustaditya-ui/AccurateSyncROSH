@@ -60,13 +60,13 @@ function computeSalesKpi(invoices, monthStart) {
       if (!inMonth(r.date)) return;
       const dov = i.dueDate ? Math.floor((r.date - i.dueDate) / DAY_MS) : null;
       collected += r.amount;
-      if (collectionBucket(dov) === 'ontime') onTimeCollected += r.amount;
+      if (dov == null || dov <= CONFIG.SALES_ONTIME_DAYS) onTimeCollected += r.amount;
     });
   });
   const omzetAchv  = collected / CONFIG.SALES_OMZET_TARGET;
   const omzetScore = clamp(omzetAchv, 0, CONFIG.CAP_OMZET);
 
-  // 2) Cashflow — share of collected (by value) settled within H+14 of due date.
+  // 2) Cashflow — share of collected (by value) settled within SALES_ONTIME_DAYS of due date.
   const cashRate  = collected > 0 ? onTimeCollected / collected : 0;
   const cashScore = clamp(cashRate, 0, CONFIG.CAP_CASHFLOW);
 
@@ -166,7 +166,7 @@ function writeThpSalesTab(k, role) {
   uiHeaderRow(sh, r, ['Komponen', 'Bobot', 'Capaian', 'Skor']); r += 1;
   r = _arRow(sh, r, 'Omzet (collected bln ini)', '45%',
       rupiah(k.collected) + ' / ' + rupiah(CONFIG.SALES_OMZET_TARGET), pct(k.omzetScore));
-  r = _arRow(sh, r, 'Cashflow (≤H+14)', '25%',
+  r = _arRow(sh, r, 'Cashflow (≤H+' + CONFIG.SALES_ONTIME_DAYS + ')', '25%',
       pct(k.cashRate) + ' on-time', pct(k.cashScore));
   r = _arRow(sh, r, 'Efisiensi Diskon', '20%',
       (k.diskonRatio * 100).toFixed(2) + '% (' + rupiah(k.sumDiskon) + ' / ' + rupiah(k.sumBruto) + ')', pct(k.diskonScore));
@@ -400,33 +400,16 @@ function writeThpAdeTab(a) {
   sh.getRange(r - 1, 1, 1, SPAN).setBackground(UI.GREEN_SOFT).setFontColor(UI.GREEN).setFontWeight('bold');
   r += 1;
 
-  // ── POOL A — BURN-DOWN ──
-  r = uiSection(sh, r, SPAN, 'POOL A — BURN-DOWN (legacy backlog, frozen)', UI.RED);
-  r = _arRow(sh, r, 'Backlog saat onboard', rupiah(a.poolA.backlogAtOnboard), '', 'Snapshot ' + CONFIG.ADE_ONBOARD_DATE);
-  r = _arRow(sh, r, 'Sudah ditagih sejak onboard', rupiah(a.poolA.collectedSinceOnboard), '', '');
-  r = _arRow(sh, r, 'Sisa backlog (target → Rp0)', rupiah(a.poolA.remaining), '', '');
-  r += 1;
-
-  // ── BONUS PROBATION ──
-  r = uiSection(sh, r, SPAN, 'BONUS PROBATION — POOL A SAJA', UI.BLUE);
-  uiHeaderRow(sh, r, ['Bonus', 'Progress', 'Target', 'Status']); r += 1;
-  const bonusStart = r;
-  r = _arRow(sh, r, 'Sprint — ' + rupiah(b.sprint.reward),
-      rupiah(b.sprint.collected) + ' (' + pct(b.sprint.pct) + ')',
-      '≥' + rupiah(b.sprint.target) + ' / ' + CONFIG.AR_SPRINT_WINDOW_DAYS + 'hr (s.d. ' + fmtDate(b.sprint.end) + ')',
-      b.sprint.status);
-  r = _arRow(sh, r, 'Milestone — ' + rupiah(b.milestone.reward),
-      rupiah(b.milestone.collected) + ' (' + pct(b.milestone.pct) + ')',
-      '≥' + rupiah(b.milestone.target) + ' / 3bln (s.d. ' + fmtDate(b.milestone.end) + ')',
-      b.milestone.status);
-  r = _arRow(sh, r, 'Cleanup — ' + rupiah(b.cleanup.reward),
-      'Sisa ' + rupiah(b.cleanup.remaining),
-      '<' + rupiah(b.cleanup.ceiling) + ' di akhir bln-3 (' + fmtDate(b.cleanup.end) + ')',
-      b.cleanup.status);
-  [b.sprint.status, b.milestone.status, b.cleanup.status].forEach(function(st, i) {
-    uiTintStatus(sh.getRange(bonusStart + i, 4), st);
-  });
-  r += 1;
+  // Pool A burn-down + Bonus Probation DIHAPUS dari tab 2026-09-05: semua window bonus (Sprint 30 hr,
+  // Milestone/Cleanup 92 hr sejak onboard 2026-06-02) sudah tutup 2 Sep 2026, seksinya tak akan
+  // berubah lagi. Angkanya tetap dihitung di computeArKpi (a.bonus, a.poolA) untuk arsip; kalau
+  // Pool A masih bersisa, satu baris di bawah ini cukup.
+  if (a.poolA && a.poolA.remaining > 0) {
+    r = uiSection(sh, r, SPAN, 'POOL A — SISA BACKLOG LAMA', UI.RED);
+    r = _arRow(sh, r, 'Sisa backlog (target Rp0)', rupiah(a.poolA.remaining), '',
+      'dari ' + rupiah(a.poolA.backlogAtOnboard) + ' saat onboard ' + CONFIG.ADE_ONBOARD_DATE);
+    r += 1;
+  }
 
   // ── POOL B ──
   r = uiSection(sh, r, SPAN, 'POOL B — ONGOING AR', UI.BLUE);

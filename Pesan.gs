@@ -2,14 +2,15 @@
  * ROSH × Accurate — Pesan Penagihan (ready-to-send WhatsApp collection messages).
  *
  * Group-by-CUSTOMER: 1 pesan per pelanggan menggabungkan semua faktur-nya yang ada di
- * window penagihan H-1 → H+CONFIG.PENAGIHAN_WINDOW_MAX (14) — mendukung 4-touch flow
- * Deden (H-1 / H+3 / H+7 / H+14, nada sopan naik bertahap). Nathan/Deden tinggal COPY teks atau TAP
- * link wa.me yang pesannya sudah terisi (manual Send — BUKAN auto-send; lihat catatan
- * Reminders.gs yang dihapus 2026-05-31).
+ * window penagihan H-3 → H+CONFIG.PENAGIHAN_WINDOW_MAX (14), mengikuti jadwal tagih Panduan
+ * Sales v1.0 bagian 6: H-3 & H0 reminder kantor, H+3 dan H+7 tindak lanjut, H+14 terakhir
+ * sebelum handover Ade (H+1 telepon dan H+3 kunjungan adalah tugas sales, bukan pesan WA).
+ * Nathan/Deden tinggal COPY teks atau TAP link wa.me yang pesannya sudah terisi (manual Send,
+ * BUKAN auto-send; lihat catatan Reminders.gs yang dihapus 2026-05-31).
  *
- * Scope = WINDOW-ONLY: hanya faktur dengan daysPastDue ∈ [-1,14] yang masuk pesan & total.
- * Faktur yang belum jatuh tempo (jauh dari H-1) TIDAK disebut — dapat giliran sendiri saat
- * mendekati JT. "Gabung" hanya terjadi bila ≥2 faktur customer sama-sama di window.
+ * Scope = WINDOW-ONLY: hanya faktur dengan daysPastDue ∈ [WINDOW_MIN, WINDOW_MAX] yang masuk
+ * pesan & total. Faktur yang belum jatuh tempo (jauh dari H-3) TIDAK disebut. "Gabung" hanya
+ * terjadi bila ≥2 faktur customer sama-sama di window.
  *
  * Pure projection — no Accurate call, no new OAuth scope. Master-only. Depends on Sync.gs
  * (fields, _ss, fmtDate) + Style.gs (UI helpers) + Kpi.gs (rupiah) + Faktur.gs (FAKTUR const).
@@ -27,7 +28,7 @@ var PESAN_DROW = 4;  // first data row
 // BUILDER — group faktur belum lunas (daysPastDue ∈ [-1, WINDOW_MAX]) per customer.
 // ─────────────────────────────────────────────────────────────────────────────
 function buildPenagihanBatch(invoices, today) {
-  const lo = -1, hi = CONFIG.PENAGIHAN_WINDOW_MAX;
+  const lo = CONFIG.PENAGIHAN_WINDOW_MIN, hi = CONFIG.PENAGIHAN_WINDOW_MAX;
   const byCust = {};
   invoices.forEach(function(i) {
     if (i.isPaid || !(i.outstanding > 0)) return;
@@ -54,12 +55,13 @@ function buildPenagihanBatch(invoices, today) {
   }).sort(function(a, b) { return b.maxDaysPastDue - a.maxDaysPastDue; });
 }
 
-// Bucket 4-touch flow (H-1 / H+3 / H+7 / H+14). Dipakai bersama oleh tab Pesan Penagihan
-// DAN To-Do section Penagihan (lewat buildDueReminders) — biar segmennya konsisten.
+// Bucket jadwal SOP (H-3 / H0 / H+3 / H+7 / H+14). Label internal untuk warna & filter;
+// TIDAK muncul di teks customer. Ambang atas tiap bucket = hari terakhir bucket itu.
 function _penagihanBucket(dpd) {
-  if (dpd <= 0) return 'H-1 · Jatuh tempo';
-  if (dpd <= 3) return 'H+3 · Nudge';
-  if (dpd <= 7) return 'H+7 · Stop-supply';
+  if (dpd < 0)   return 'H-3 · Sebelum jatuh tempo';
+  if (dpd <= 2)  return 'H0 · Jatuh tempo';
+  if (dpd <= 6)  return 'H+3 · Tindak lanjut';
+  if (dpd <= 13) return 'H+7 · Stop-supply';
   return 'H+14 · Terakhir';
 }
 
@@ -97,13 +99,15 @@ function _penagihanMessageBatch(c) {
   let msg = 'Halo Bapak/Ibu ' + cust + ', ';
   if (tier === 'A' || tier === 'B') msg += 'terima kasih atas kepercayaan dan kerja samanya selama ini. ';
 
-  if (dpd <= 0) {
-    // window lo = -1 → bucket ini isinya dpd -1 (besok) & 0 (hari ini); jangan bilang "besok" untuk keduanya.
-    msg += 'mohon izin mengingatkan, tagihan berikut ' + (dpd < 0 ? 'akan jatuh tempo besok' : 'jatuh tempo hari ini') +
+  if (dpd < 0) {
+    msg += 'mohon izin mengingatkan, tagihan berikut akan jatuh tempo dalam ' + (-dpd) + ' hari' +
+           (dpd === -1 ? ' (besok)' : '') + '. Apabila pembayaran sudah dijadwalkan, kami ucapkan terima kasih.';
+  } else if (dpd <= 2) {
+    msg += 'mohon izin mengingatkan, tagihan berikut ' + (dpd === 0 ? 'jatuh tempo hari ini' : 'telah jatuh tempo') +
            '. Apabila pembayaran sudah dijadwalkan, kami ucapkan terima kasih.';
-  } else if (dpd <= 3) {
+  } else if (dpd <= 6) {
     msg += 'mohon izin melakukan follow up untuk tagihan berikut yang telah melewati tanggal jatuh tempo. Apabila pembayaran masih dalam proses, kami akan sangat terbantu bila Bapak/Ibu berkenan menginformasikan estimasi waktu pembayarannya.';
-  } else if (dpd <= 7) {
+  } else if (dpd <= 13) {
     msg += 'mohon izin kembali menindaklanjuti tagihan berikut yang masih tercatat belum terselesaikan. Kami akan sangat menghargai bila Bapak/Ibu dapat menginformasikan estimasi waktu pembayarannya, agar order berikutnya dapat langsung kami proses.';
   } else {
     msg += 'mohon izin menindaklanjuti kembali tagihan berikut yang hingga saat ini masih tercatat belum terselesaikan. Kami akan sangat menghargai bila Bapak/Ibu dapat memberikan konfirmasi jadwal pembayarannya. Apabila ada hal yang ingin didiskusikan terkait pembayaran, kami dengan senang hati siap membantu.';
@@ -141,7 +145,7 @@ function writePesanTab(batch) {
 
   uiBanner(sh, 1, SPAN,
     '✉️ Pesan Penagihan — Siap Kirim (per customer)',
-    'Satu pesan per pelanggan menggabungkan semua faktur dalam window H-1 → H+' + CONFIG.PENAGIHAN_WINDOW_MAX +
+    'Satu pesan per pelanggan menggabungkan semua faktur dalam window H' + CONFIG.PENAGIHAN_WINDOW_MIN + ' → H+' + CONFIG.PENAGIHAN_WINDOW_MAX +
     '. COPY kolom Pesan, atau TAP 📲 Kirim WA → WhatsApp kebuka dengan pesan sudah terisi, tinggal Send. ' +
     'Dibuat ulang otomatis tiap jam 5 pagi — jangan edit manual.',
     UI.GREEN, UI.GREEN_SOFT);
@@ -151,7 +155,7 @@ function writePesanTab(batch) {
 
   if (!batch.length) {
     sh.getRange(PESAN_DROW, 1, 1, SPAN).merge()
-      .setValue('✅ Tidak ada tagihan di window H-1 → H+' + CONFIG.PENAGIHAN_WINDOW_MAX + '.')
+      .setValue('✅ Tidak ada tagihan di window H' + CONFIG.PENAGIHAN_WINDOW_MIN + ' → H+' + CONFIG.PENAGIHAN_WINDOW_MAX + '.')
       .setFontColor(UI.NOTE).setFontStyle('italic').setVerticalAlignment('middle');
     sh.setColumnWidth(1, 200);
     return sh;
@@ -176,7 +180,8 @@ function writePesanTab(batch) {
   const remRange  = sh.getRange(PESAN_DROW, 6, matrix.length, 1);
   const tierRange = sh.getRange(PESAN_DROW, 7, matrix.length, 1);
   sh.setConditionalFormatRules([
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H-1').setBackground(UI.T_AMBER).setRanges([remRange]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H-3').setBackground(UI.T_GREY).setRanges([remRange]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H0').setBackground(UI.T_AMBER).setRanges([remRange]).build(),
     SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H+3').setBackground('#fed7aa').setRanges([remRange]).build(),
     SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H+7').setBackground(UI.T_RED).setRanges([remRange]).build(),
     SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H+14').setBackground('#fecaca').setRanges([remRange]).build(),
@@ -188,8 +193,9 @@ function writePesanTab(batch) {
 
   uiFootnote(sh, PESAN_DROW + matrix.length + 1, SPAN,
     '◆ Cara pakai: 1 baris = 1 pelanggan (faktur digabung). COPY kolom Pesan atau tap 📲 Kirim WA (pesan auto-terisi, ' +
-    'tinggal Send — tidak terkirim otomatis). Bucket H+7 = pengingat sopan + isyarat halus order berikutnya menunggu pelunasan. Faktur yang ' +
-    'BELUM jatuh tempo (jauh dari H-1) tidak disebut. Tier A/B nada lebih hangat. Baris tanpa No. Telp (POS/online) tak punya link.');
+    'tinggal Send — tidak terkirim otomatis). Kolom Reminder ikut jadwal SOP: H-3 dan H0 pengingat, H+3 tindak lanjut, H+7 isyarat halus order ' +
+    'berikutnya menunggu pelunasan, H+14 terakhir sebelum handover. Faktur yang BELUM jatuh tempo (jauh dari H-3) tidak disebut. ' +
+    'Loyalitas A/B nada lebih hangat. Baris tanpa No. Telp (POS/online) tak punya link.');
 
   sh.setColumnWidth(1, 200); sh.setColumnWidth(2, 130); sh.setColumnWidth(3, 130);
   sh.setColumnWidth(4, 90);  sh.setColumnWidth(5, 140); sh.setColumnWidth(6, 150);

@@ -58,6 +58,11 @@ const CONFIG = {
   SALES_TUNJANGAN_MULT: 3500000,   // tunjangan = score × this
   SALES_TUNJANGAN_CAP: 1.06,       // tunjangan score capped at 106%
   SALES_OMZET_TARGET: 100000000,   // Rp100jt collected → 100% omzet
+  // Pilar Cashflow KPI Sales: kas dianggap TEPAT WAKTU kalau masuk ≤ SALES_ONTIME_DAYS setelah
+  // jatuh tempo. Dulu menumpang HANDOVER_GRACE_DAYS (14): dengan tempo 14, bayar 28 hari setelah
+  // faktur masih dinilai tepat waktu, padahal SOP mencabut tempo di H+7. Dipisah 2026-09-05.
+  // Handover ke Ade TETAP H+15 (HANDOVER_GRACE_DAYS), dua hal berbeda.
+  SALES_ONTIME_DAYS: 7,
   SALES_COMMISSION_RATE: 0.0125,   // 1.25% on collected above target
   SALES_COMMISSION_FLOOR: 100000000, // komisi only on collected above Rp100jt
   // BASIS komisi = SELURUH kas masuk bulan itu atas faktur Deden, termasuk kas yang cair
@@ -129,7 +134,8 @@ const CONFIG = {
     [14, 'H+14 · Surat Peringatan dari owner'],
     [30, 'H+30 · Owner ambil alih penuh, sales lepas']
   ],
-  PENAGIHAN_WINDOW_MAX: 14, // tab Pesan cakup faktur daysPastDue ∈ [-1,14] (window Deden pra-handover)
+  PENAGIHAN_WINDOW_MIN: -3, // tab Pesan mulai H-3 (reminder kantor, jadwal SOP bagian 6)
+  PENAGIHAN_WINDOW_MAX: 14, // tab Pesan cakup faktur daysPastDue ∈ [MIN,14] (window Deden pra-handover)
   // Aturan dispatch kunjungan (dari diagram flow). Prioritas: Solo > Nearest > Rute > Antri.
   DISPATCH: {
     SOLO_MIN:       2500000,  // outstanding ≥ Rp2,5jt → boleh kunjungan SOLO (jangan nunggu cluster)

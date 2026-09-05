@@ -961,7 +961,7 @@ function buildDueReminders(invoices, today) {
   return invoices
     .filter(function(i) {
       return !i.isPaid && i.outstanding > 0 &&
-             i.daysPastDue != null && i.daysPastDue >= -1 && i.daysPastDue <= CONFIG.PENAGIHAN_WINDOW_MAX;
+             i.daysPastDue != null && i.daysPastDue >= CONFIG.PENAGIHAN_WINDOW_MIN && i.daysPastDue <= CONFIG.PENAGIHAN_WINDOW_MAX;
     })
     .map(function(i) {
       return {

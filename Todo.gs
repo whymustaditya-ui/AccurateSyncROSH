@@ -126,7 +126,9 @@ function writeTodoTab(todo, role) {
     sh.getRange(first, 1, n, SPAN).setVerticalAlignment('middle')
       .setBorder(true, true, true, true, true, true, UI.BORDER, SpreadsheetApp.BorderStyle.SOLID);
     sh.getRange(first, C['Pesan'], n, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
-    sh.setRowHeights(first, n, 24);
+    // setRowHeights biasa masih membiarkan baris melar mengikuti isi sel (pesan multi-baris);
+    // setRowHeightsForced yang benar-benar mengunci tingginya.
+    sh.setRowHeightsForced(first, n, 24);
     sh.getRange(first, C['📲 Kirim WA'], n, 1).setHorizontalAlignment('center');
     tierRules(sh.getRange(first, C['Loyalitas (4bln)'], n, 1));
   };

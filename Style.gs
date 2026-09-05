@@ -110,7 +110,7 @@ function writeCaraBacaTab() {
         [CONFIG.TABS.SUMMARY, 'Dashboard utama: posisi piutang vs target, gate order hari ini, collected, gaji, aging, tren, top debitur', 'Buka ini dulu'],
         [CONFIG.TABS.STATUS_CUST, 'Gate sebelum buat SO: Boleh Supply? YA/TIDAK, cara bayar, limit & sisa limit tiap customer. Versi Deden hanya customer dia', 'Sales cek tiap order'],
         [CONFIG.TABS.STOP_SUPPLY, 'Customer yang ditahan: lewat jatuh tempo (OVD) atau lewat limit (LIM), sejak kapan, tindakan berikutnya', 'Nathan tahan SO'],
-        [CONFIG.TABS.PESAN, 'Pesan WA penagihan siap kirim, 1 pesan/pelanggan, window H-3 → H+14', 'Copy / tap Kirim WA'],
+        [CONFIG.TABS.TODO, 'Daftar kerja harian: siapa ditagih (H-3 → H+14) dan siapa disapa lagi (lama tidak order), pesan WA sudah terisi', 'Tap Kirim WA'],
         [CONFIG.TABS.RUTE, 'Daftar jalan penagihan ' + me + ': piutang terbuka per zona, diurut prioritas + rute terdekat', 'Isi Zona & Pin Maps'],
         [CONFIG.TABS.CUSTOMER, 'Rapor per customer: skor bayar, margin bersih, saran limit. Sumber angka Status Customer & Stop Supply', 'Owner, mingguan'],
         [CONFIG.TABS.TURUN_BUKU, 'Jalur bulanan turun ke target piutang + daftar konversi customer lama ke tempo 14 (Hijau/Kuning/Merah)', 'Kemudi bulanan'],
@@ -118,7 +118,6 @@ function writeCaraBacaTab() {
         [CONFIG.TABS.POOL_B, 'Piutang berjalan yang lewat ke ' + me + ' (H+15)', 'Terus bertambah'],
         [CONFIG.TABS.INVOICE_SALES, 'Tagihan yang masih di tangan Sales (H+0 sampai H+14)', ''],
         [CONFIG.TABS.TAGIHAN_LAIN, 'Tagihan pra-handover di luar Sales (POS, Nathan, lainnya)', ''],
-        [CONFIG.TABS.REAKTIVASI, 'Customer yang lama tidak order, urut hari sejak order terakhir', 'Follow-up sales'],
         [CONFIG.TABS.KONTAK, 'Direktori semua customer: nama, No WA, No bisnis', ''],
         [CONFIG.TABS.RESTOCK, 'Saran pembelian per SKU: tier, reorder point, budget', 'Owner'],
         [CONFIG.TABS.THP_ADE, 'Komisi & take-home pay ' + me + ' bulan ini', ''],
@@ -229,10 +228,10 @@ function orderTabs() {
   // sales support → gaji → log.
   const order = [
     CONFIG.TABS.CARA_BACA, CONFIG.TABS.SUMMARY,
-    CONFIG.TABS.STATUS_CUST, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.PESAN, CONFIG.TABS.RUTE,
+    CONFIG.TABS.STATUS_CUST, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.TODO, CONFIG.TABS.RUTE,
     CONFIG.TABS.CUSTOMER, CONFIG.TABS.TURUN_BUKU,
     CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.TAGIHAN_LAIN, CONFIG.TABS.COLLECTED,
-    CONFIG.TABS.REAKTIVASI, CONFIG.TABS.KONTAK, CONFIG.TABS.RESTOCK,
+    CONFIG.TABS.KONTAK, CONFIG.TABS.RESTOCK,
     CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
   ];
   // Position counts only the tabs THIS file actually has. Using the array index would

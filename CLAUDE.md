@@ -24,7 +24,8 @@ the versioned copies.
 | `TurunBuku.gs` | 📉 Turun Buku Piutang (master-only): jalur menurunkan AR ke `TARGET_AR` (Rp150jt) dalam `MONTHS` (6) bulan + **KONVERSI KE TEMPO 14** (sejak 2026-09-05, menggantikan gelombang cabut tempo & Tarik Dulu). **Riwayat GRATIS** — `_MetricSnapshots` sudah menyimpan `totalAR` + bucket umur harian, jadi glide path & tren NPL ditarik MUNDUR (`NPL_DAYS` 60 karena bucket 61-90 & 90+ sudah ada). `_glidePath` garis lurus dari snapshot bulan `PROGRAM_START`; juga dipakai Ringkasan untuk baris "target bulan ini". `_konversiList`/`_konversiSegmen`: customer yang masih pegang tempo (`tempoModus > COD_TEMPO_MAX`, bukan tunai/baru/dorman) disegmen dari rata-rata telat `wadl`: **🟢 Hijau ≤3 · 🟡 Kuning ≤14 · 🔴 Merah >14 / faktur terbuka >14 hari / STOP-COD** (`TB_SEGMEN`, tawaran + minggu kunjungan dari Panduan Sales bagian 9). Dua kolom 🟡 **Status Konversi + Catatan** (`collectTurunYellow`, kunci nama customer). Kolom dialamatkan `TB_COL[nama]`. POSISI HARI INI 5 baris |
 | `Health.gs` | Business Health (master-only): AR aging waterfall, DSO, collected-vs-billed MTD, top debtors + **daily trend snapshots** (hidden `_MetricSnapshots`, upsert-by-date) driving SPARKLINE trends. `computeBusinessHealth`/`recordMetricSnapshot`/`writeHealthSections`. **Folded into `📋 Ringkasan`** — `writeHealthSections(sh,row,m,span)` appends AGING/TREN/TOP DEBITUR (seksi RINGKAS-nya dipindah ke blok POSISI PIUTANG di `writeSummaryTab`, 2026-09-05). Pure projection — zero new Accurate calls/scope |
 | `Route.gs` | Rute Penagihan: aggregate Ade's open AR by customer, zona grouping (`Zona (auto)` from address-text regex `_zonaFromAddress`, geocode fallback + Ade override), zona priority (Σ Rp × umur), nearest-neighbour stop ordering from Maps pins / geocoded coords, `Tier (4bln)` + `Tipe Dispatch` (`_dispatchType`: Solo/Nearest/Rute/Antri) cols, `🗺️ Rute Penagihan` writer. Built-in Maps geocoder + `_PinCache`/`_GeoCache` |
-| `Pesan.gs` | Pesan Penagihan: ready-to-send WA messages **group-by-customer** (1 pesan gabung faktur window **H-3 → H+14**, `PENAGIHAN_WINDOW_MIN/MAX`) via `buildPenagihanBatch`. Bucket `_penagihanBucket` ikut jadwal SOP: **H-3 · H0 · H+3 · H+7 · H+14** (2026-09-05; H+1 telepon & H+3 kunjungan = tugas sales, bukan WA). `_waPhone` normalize, `_penagihanMessageBatch` (tone semi-formal per bucket, direvisi 2026-07-28 pasca komplain partner + loyalitas A/B soften + bank instr + CTA bukti transfer), `_waLinkFormula` (wa.me prefill). Master-only. **Satu-satunya daftar penagihan JT** (seksi Penagihan di To-Do lama dihapus, duplikat) |
+| `Pesan.gs` | **Teks pesan WA + builder saja** (writer pindah ke `Todo.gs` 2026-09-05). `buildPenagihanBatch` group-by-customer (window **H-3 → H+14**, `PENAGIHAN_WINDOW_MIN/MAX`), `_penagihanBucket` ikut jadwal SOP (**H-3 · H0 · H+3 · H+7 · H+14**), `_penagihanMessageBatch` (tone semi-formal per bucket, direvisi 2026-07-28 pasca komplain partner + loyalitas A/B soften + bank instr + CTA bukti transfer), **`_sapaMessage`** (pesan reaktivasi: ringan, tanpa tempo/limit/harga, variasi <21 / <60 / ≥60 hari diam), `_waPhone`, `_waLinkFormula` (wa.me prefill) |
+| `Todo.gs` | 📌 To-Do Harian (**master + file Deden** alias `📌 To-Do Kamu`, BUILT 2026-09-05, menggantikan ✉️ Pesan Penagihan + 📞 Reaktivasi Customer). `buildTodo(invoices, today)` → `{tagih, sapa, sapaTotal}`: `tagih` = `buildPenagihanBatch` apa adanya; `sapa` = `buildFollowUpReminders` **disaring** (buang customer yang ada di `tagih` dan yang punya faktur lewat JT ≥ `STOP_SUPPLY_DAYS`, SOP: jangan disapa jualan), urut loyalitas A→D lalu hari diam, dipotong **`TODO_SAPA_MAX`** (30). `writeTodoTab(todo, role)`: strip 3 angka, seksi 🔔 TAGIH HARI INI + 📞 SAPA LAGI, tiap baris 📲 Kirim WA (`_waLinkFormula`) + kolom Pesan; header per role (`_todoHeaders`, kolom Sales dibuang di Deden). Deden = `buildTodo(_bySalesman(invoices))`. Nol call Accurate |
 | `StopSupply.gs` | ⛔ Stop Supply, **master-only sejak 2026-09-05** (file Deden pindah ke `Status.gs`). `buildStopSupply(invoices, today, rapor)` = customer dengan kode **OVD** (faktur lewat JT, ambang `CONFIG.STOP_SUPPLY_DAYS` **1**) **atau LIM** (outstanding > limit berlaku), mengikuti Lampiran B Panduan Sales v1.0. Kolom: Alasan (kode) · Sejak (JT faktur tertua + 1) · Limit Berlaku · **Tindakan Berikutnya** dari `CONFIG.STOP_SUPPLY_STEPS` (jadwal tagih H+1/H+3/H+7/H+14/H+30). Strip ringkas 4 angka di atas tabel. **`_limitBerlaku(r)`** (dipakai bersama Status.gs + RINGKAS Rapor) = Limit Disetujui Nathan kalau diisi (parse digit, teks "Rp10.000.000" tetap terbaca), else Saran Limit mesin. Dibangun **SETELAH** `buildCustomerReport` di `fullSync` karena LIM butuh rapor; rapor null → tetap jalan tanpa LIM. Kode SKK/COD/HP/GIRO/LOST/BL dari SOP butuh input manusia, belum otomatis. Flag-only — Nathan tahan SO baru manual di Accurate |
 | `Status.gs` | 🚦 Status Customer (**master + file Deden**, BUILT 2026-09-05): tab yang dibaca sales **sebelum buat SO** (Panduan Sales bagian 3). `buildCustomerStatus(rapor)` memproyeksikan `rapor.list` ke sisi bayar + limit saja, **nol kolom margin** → aman untuk Deden. Gate biner **`⛔ TIDAK`** (OVD atau LIM, keanggotaan **identik** dengan Stop Supply, sengaja) / **`✅ YA`**; kolom `Cara Bayar` = `🧾 TEMPO 14 HARI` (punya tempo & limit berlaku > 0) atau `💵 BAYAR DULU` (BARU/TUNAI/DORMAN/RISIKO/STOP/plafon habis, alasannya di Keterangan); `Sisa Limit` = limit − nunggak. Tiga seksi: DITAHAN (urut hari telat) → BOLEH TEMPO (abjad) → BOLEH BAYAR DULU (abjad), tiap seksi ber-TOTAL, strip ringkas + CARA BACA. Header dinamis per role (`_statusHeaders`: kolom Sales dibuang di file Deden). Deden = `_bySalesman(custStatus.rows)` pada baris status; outstanding/limit tetap level customer. Nol call Accurate, nol scope |
 | `Kontak.gs` | 📇 Kontak Customer (master-only): directory SEMUA customer master — `Nama Customer \| No WA \| No Bisnis`. `harvestAllCustomerContacts` = page `customer/list.do` (id saja) → `customer/detail.do` per id TIME-BUDGETED (3 min / 300 per run, drain bertahap) → simpan ke `_ContactCache` 7-kolom; `writeKontakTab` murni baca cache (nol API); `refreshKontakNow` = menu manual drain. No WA = `_custWa` — **CONFIRMED via diag 2026-07-06: field API "No. WhatsApp" = `bbmPin`** (legacy BBM Pin di-recycle; `mobilePhone` = Handphone, sering null) → kandidat lain + regex-scan camel→snake sebagai jaga-jaga → fallback Handphone. No Bisnis = `_custBiz` (`workPhone\|phone\|fax`; UI "No. Telp. Bisnis" = `workPhone`). Verify via `diagKontakFields()` (dump key phone-like + hasil mapping); habis ganti mapping jalankan `rebuildKontakCacheNow` (wipe cache — entry ber-`nama` di-skip harvest, wipe = satu-satunya jalan refill `noWa`). Scope `customer_view` (sudah ada) |
@@ -59,7 +60,7 @@ the versioned copies.
    OCR of proof, invoice match, and a human-approve gate before posting. ⚠ Bro labeled it
    "Pembayaran Pembelian" but source is customer chat → it's a **sales receipt**, not buy-side.
    Confirm before building.
-3. **WA penagihan reminders** — ❌ REMOVED (2026-05-31). `Reminders.gs` deleted from script editor; WA menu items removed from `Code.gs`.
+3. **WA penagihan reminders** — auto-send ❌ REMOVED (2026-05-31, `Reminders.gs` deleted). Sejak 2026-09-05 pengiriman MANUAL lewat 📌 To-Do Harian: link wa.me terisi untuk tagih dan sapa lagi.
 
 ---
 
@@ -115,8 +116,8 @@ Tahap 2 Deden H+8–14 · handover Ade >H+14 (`handoverDate=dueDate+15`, **sudah
 Ade weekly + antrian kunjungan. Thresholds di `CONFIG` (`STOP_SUPPLY_DAYS 1`, `PENAGIHAN_WINDOW_MAX 14`,
 `DISPATCH.{SOLO_MIN 2.5jt, ZONE_MIN_STOPS 3, QUEUE_AGE_DAYS 21}`). Tiga deliverable, semua master-only:
 
-### ✉️ Pesan Penagihan (`Pesan.gs`) — group-by-customer
-Tab **`✉️ Pesan Penagihan`**. **1 pesan per pelanggan** menggabungkan semua faktur dalam window
+### 📌 To-Do Harian (`Todo.gs` + `Pesan.gs`) — dulu ✉️ Pesan Penagihan
+Tab **`📌 To-Do Harian`** (seksi 🔔 TAGIH; seksi 📞 SAPA LAGI = reaktivasi, lihat baris `Todo.gs`). **1 pesan per pelanggan** menggabungkan semua faktur dalam window
 **H-3 → H+14** (`buildPenagihanBatch`; bucket H-3 / H0 / H+3 / H+7 / H+14 sejak 2026-09-05). **Window-only**: faktur belum jatuh tempo (jauh dari H-1)
 TIDAK disebut; "gabung" hanya bila ≥2 faktur customer sama-sama di window. Bucket 4-touch
 (`_penagihanBucket`, **dipakai bersama** oleh To-Do section Penagihan via `buildDueReminders` → segmen
@@ -259,14 +260,14 @@ apa yang dibuang, pakai lagi kalau menambah fitur:
 - **Seksi yang tak akan berubah lagi dihapus dari tampilan** (Bonus Probation Ade, window tutup 2 Sep 2026),
   hitungannya tetap ada untuk arsip.
 - **Nama tab = isi, bukan jargon.** `📊 KPI AR (Ade)` / `📊 KPI Sales (Deden)` / `📈 Riwayat Gaji` /
-  `📞 Reaktivasi Customer` / `🧾 Tagihan Non-Sales` / `⛔ Stop Supply`. Rename lewat `TAB_MIGRATION`
+  `📌 To-Do Harian` (Pesan + Reaktivasi dilebur) / `🧾 Tagihan Non-Sales` / `⛔ Stop Supply`. Rename lewat `TAB_MIGRATION`
   (rename di tempat, dijalankan di master **dan file Ade** via `migrateTabNames()`); Pool A/B sengaja
   TIDAK di-rename (kebiasaan Ade + 🟡 dikumpulkan sebelum migrasi jalan).
 - **Header kolom dialamatkan lewat nama** (`CUST_COL`, `TB_COL`, `STOPSUP_COL`, `_statusHeaders`), bukan indeks
   tetap, supaya menambah/membuang kolom tidak menggeser format & 🟡 upsert.
-- **Urutan tab = alur kerja** (`orderTabs`): Cara Baca · Ringkasan · Status Customer · Stop Supply · Pesan ·
+- **Urutan tab = alur kerja** (`orderTabs`): Cara Baca · Ringkasan · Status Customer · Stop Supply · To-Do Harian ·
   Rute · Rapor · Turun Buku · Pool A · Pool B · Tagihan Sales · Tagihan Non-Sales · Faktur Collected ·
-  Reaktivasi · Kontak · Restock · KPI Sales · KPI AR · Riwayat Gaji · Log.
+  Kontak · Restock · KPI Sales · KPI AR · Riwayat Gaji · Log.
 - **`📋 Ringkasan` = dashboard utama** (`writeSummaryTab` master): POSISI PIUTANG (total vs jalur target,
   overdue, NPL, DSO, di tangan Sales/Ade) · GATE ORDER HARI INI (ditahan, boleh order, Σ limit vs target,
   perlu aksi owner) · COLLECTED · GAJI · AGING/TREN/TOP DEBITUR. Butuh `ctx.rapor` + `ctx.custStatus`
@@ -280,7 +281,7 @@ Sheet file per person**, fed by the same sync:
 
 - **Master `Tracker Invoice`** (owner = Roshan, never shared to staff) — all tabs.
 - **Ade file** (`ROSH AR — Ade`, shared **Editor**) — Summary (AR-scoped) + Pool A + Pool B + KPI Matriks AR.
-- **Deden file** (`ROSH Tagihan — Deden`, shared **Viewer**) — Summary (Sales-scoped) + Tagihan Sales + **Pool B (scoped to his own customers)** + **🚦 Status Customer (his customers, since 2026-09-05; replaced ⛔ Customer Ditahan)** + **💰 Faktur Collected** + KPI Matriks Sales + **📈 Riwayat THP (section SALES saja)**.
+- **Deden file** (`ROSH Tagihan — Deden`, shared **Viewer**) — Summary (Sales-scoped) + Tagihan Sales + **Pool B (scoped to his own customers)** + **🚦 Status Customer (his customers, since 2026-09-05; replaced ⛔ Customer Ditahan)** + **📌 To-Do Kamu (tagih + sapa lagi, Kirim WA)** + **💰 Faktur Collected** + KPI Matriks Sales + **📈 Riwayat THP (section SALES saja)**.
 
 **💰 Faktur Collected di file Deden (2026-08-02):** semua tab lain di file-nya berorientasi tagihan yang
 BELUM lunas; angka *collected* cuma ada sebagai skalar (KPI Matriks Sales + kolom Collected di Riwayat THP).
@@ -316,7 +317,7 @@ master, aman dipanggil di file role mana pun.
 **Nama tab versi Deden (2026-08-02):** `CONFIG.TABS` ditulis dari sudut pandang operator AR (`Pool B — Ongoing AR`,
 `KPI Matriks Sales`, `Riwayat THP`) — buat Deden itu jargon. Peta **`TABS_DEDEN`** (Code.gs, key = nama master)
 memberi file dia nama sendiri: `🧾 Tagihan Kamu` · `🔵 Faktur Ongoing AR` · `📊 KPI & Gaji Bulan Ini` ·
-`📈 Riwayat Gaji` · `🚦 Status Customer` (`💰 Faktur Collected` sengaja tidak di-alias). Entri migrasi
+`📈 Riwayat Gaji` · `🚦 Status Customer` · `📌 To-Do Kamu` (`💰 Faktur Collected` sengaja tidak di-alias). Entri migrasi
 `TABS_DEDEN['⛔ Customer Ditahan'] = STATUS_CUST` me-rename tab Stop Supply lama di tempat (2026-09-05). Mekanismenya global `TAB_ALIAS` + `_tabName()` (Sync.gs) yang dipasang di **tiga chokepoint saja**
 — `uiSheet` (Style.gs), `_tab` (Sync.gs), `writePoolTab` — plus `orderTabs`, jadi **nol writer diubah** dan
 master/Ade tetap pakai nama asli (dokumentasi + `collectPoolYellow` + kebiasaan Ade aman). `_applyTabAlias(ss, map)`

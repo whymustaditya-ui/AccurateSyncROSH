@@ -12,17 +12,13 @@
  * pesan & total. Faktur yang belum jatuh tempo (jauh dari H-3) TIDAK disebut. "Gabung" hanya
  * terjadi bila ≥2 faktur customer sama-sama di window.
  *
- * Pure projection — no Accurate call, no new OAuth scope. Master-only. Depends on Sync.gs
- * (fields, _ss, fmtDate) + Style.gs (UI helpers) + Kpi.gs (rupiah) + Faktur.gs (FAKTUR const).
+ * Sejak 2026-09-05 file ini hanya BUILDER + TEKS PESAN: penagihan (_penagihanMessageBatch) dan
+ * sapa jualan (_sapaMessage). Writer-nya ada di Todo.gs (tab 📌 To-Do Harian, master + Deden),
+ * menggantikan tab ✉️ Pesan Penagihan. Semua copy customer-facing tetap terkumpul di sini.
+ *
+ * Pure projection — no Accurate call, no new OAuth scope. Depends on Sync.gs (fields, fmtDate)
+ * + Kpi.gs (rupiah) + Faktur.gs (FAKTUR const).
  */
-
-var PESAN_HEADERS = [
-  'Customer', 'No. Telp (62…)', 'Sales', 'Jml Invoice', 'Total Outstanding',
-  'Reminder', 'Loyalitas (4bln)', '📲 Kirim WA', 'Pesan'
-];
-var PESAN_SPAN = PESAN_HEADERS.length; // 9
-var PESAN_HROW = 3;  // column-header row (banner=1, subtitle=2)
-var PESAN_DROW = 4;  // first data row
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BUILDER — group faktur belum lunas (daysPastDue ∈ [-1, WINDOW_MAX]) per customer.
@@ -137,68 +133,29 @@ function _waLinkFormula(phone, msg) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WRITER — one tab, one row per customer. All 🔴 generated (no human columns).
+// SAPA JUALAN — pesan reaktivasi untuk customer yang lama tidak order (To-Do seksi SAPA LAGI).
+// Lebih ringan dari pesan penagihan: nada lama penagihan saja pernah membuat toko memblokir
+// nomor ROSH (2026-07-28), dan ini bukan tagihan, ini ajakan. Tidak menyebut tempo, limit, atau
+// harga. Satu pertanyaan, satu penawaran bantuan, selesai. Variasi ikut bucket _followUpBucket.
 // ─────────────────────────────────────────────────────────────────────────────
-function writePesanTab(batch) {
-  const sh = uiSheet(CONFIG.TABS.PESAN);
-  const SPAN = PESAN_SPAN;
+function _sapaMessage(c) {
+  const cust = c.customer || 'Bapak/Ibu';
+  const tier = String(c.tierText || '').charAt(0);
+  const d = c.daysSince || 0;
 
-  uiBanner(sh, 1, SPAN,
-    '✉️ Pesan Penagihan — Siap Kirim (per customer)',
-    'Satu pesan per pelanggan menggabungkan semua faktur dalam window H' + CONFIG.PENAGIHAN_WINDOW_MIN + ' → H+' + CONFIG.PENAGIHAN_WINDOW_MAX +
-    '. COPY kolom Pesan, atau TAP 📲 Kirim WA → WhatsApp kebuka dengan pesan sudah terisi, tinggal Send. ' +
-    'Dibuat ulang otomatis tiap jam 5 pagi — jangan edit manual.',
-    UI.GREEN, UI.GREEN_SOFT);
+  let msg = 'Halo Bapak/Ibu ' + cust + '. ';
+  if (tier === 'A' || tier === 'B') msg += 'Terima kasih sudah menjadi pelanggan setia ROSH. ';
 
-  uiHeaderRow(sh, PESAN_HROW, PESAN_HEADERS);
-  sh.setFrozenRows(PESAN_HROW);
-
-  if (!batch.length) {
-    sh.getRange(PESAN_DROW, 1, 1, SPAN).merge()
-      .setValue('✅ Tidak ada tagihan di window H' + CONFIG.PENAGIHAN_WINDOW_MIN + ' → H+' + CONFIG.PENAGIHAN_WINDOW_MAX + '.')
-      .setFontColor(UI.NOTE).setFontStyle('italic').setVerticalAlignment('middle');
-    sh.setColumnWidth(1, 200);
-    return sh;
+  if (d < 21) {
+    msg += 'Sudah beberapa minggu sejak order terakhir' + (c.lastTransDate ? ' (' + fmtDate(c.lastTransDate) + ')' : '') +
+           '. Kalau ada kebutuhan thinwall atau cup yang perlu kami siapkan, tinggal kabari, stok lengkap dan bisa kirim besok.';
+  } else if (d < 60) {
+    msg += 'Sudah sekitar sebulan kami tidak menerima order dari ' + cust +
+           '. Semoga usahanya lancar. Kalau ada kebutuhan kemasan yang bisa kami bantu, kabari saja, kami siapkan dan kirim besok.';
+  } else {
+    msg += 'Sudah lama kami tidak menyapa. Semoga Bapak/Ibu dan usahanya sehat dan lancar. ' +
+           'Stok thinwall dan cup kami lengkap; kalau sewaktu-waktu ada kebutuhan, kami siap bantu siapkan dan antar.';
   }
-
-  const matrix = batch.map(function(c) {
-    const phone = _waPhone(c.noTlp);
-    const msg   = _penagihanMessageBatch(c);
-    return [
-      c.customer, phone, c.salesman || '(POS / online)', c.invoices.length, c.totalOutstanding,
-      c.bucket, c.tierText || '', _waLinkFormula(phone, msg), msg
-    ];
-  });
-  sh.getRange(PESAN_DROW, 1, matrix.length, SPAN).setValues(matrix).setVerticalAlignment('top');
-  sh.getRange(PESAN_DROW, 1, matrix.length, SPAN)
-    .setBorder(true, true, true, true, true, true, UI.BORDER, SpreadsheetApp.BorderStyle.SOLID);
-  sh.getRange(PESAN_DROW, 4, matrix.length, 1).setHorizontalAlignment('center'); // Jml Invoice
-  sh.getRange(PESAN_DROW, 5, matrix.length, 1).setNumberFormat('"Rp"#,##0');     // Total Outstanding
-  sh.getRange(PESAN_DROW, 9, matrix.length, 1).setWrap(true);                     // Pesan — wrap for copy
-
-  // conditional formats: Reminder bucket (col 6) + Tier (col 7, per huruf)
-  const remRange  = sh.getRange(PESAN_DROW, 6, matrix.length, 1);
-  const tierRange = sh.getRange(PESAN_DROW, 7, matrix.length, 1);
-  sh.setConditionalFormatRules([
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H-3').setBackground(UI.T_GREY).setRanges([remRange]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H0').setBackground(UI.T_AMBER).setRanges([remRange]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H+3').setBackground('#fed7aa').setRanges([remRange]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H+7').setBackground(UI.T_RED).setRanges([remRange]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('H+14').setBackground('#fecaca').setRanges([remRange]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges([tierRange]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges([tierRange]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges([tierRange]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges([tierRange]).build()
-  ]);
-
-  uiFootnote(sh, PESAN_DROW + matrix.length + 1, SPAN,
-    '◆ Cara pakai: 1 baris = 1 pelanggan (faktur digabung). COPY kolom Pesan atau tap 📲 Kirim WA (pesan auto-terisi, ' +
-    'tinggal Send — tidak terkirim otomatis). Kolom Reminder ikut jadwal SOP: H-3 dan H0 pengingat, H+3 tindak lanjut, H+7 isyarat halus order ' +
-    'berikutnya menunggu pelunasan, H+14 terakhir sebelum handover. Faktur yang BELUM jatuh tempo (jauh dari H-3) tidak disebut. ' +
-    'Loyalitas A/B nada lebih hangat. Baris tanpa No. Telp (POS/online) tak punya link.');
-
-  sh.setColumnWidth(1, 200); sh.setColumnWidth(2, 130); sh.setColumnWidth(3, 130);
-  sh.setColumnWidth(4, 90);  sh.setColumnWidth(5, 140); sh.setColumnWidth(6, 150);
-  sh.setColumnWidth(7, 190); sh.setColumnWidth(8, 110); sh.setColumnWidth(9, 540);
-  return sh;
+  msg += '\n\nTerima kasih, Bapak/Ibu.\n-TIM ROSH PLASTIC';
+  return msg;
 }

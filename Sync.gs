@@ -88,8 +88,7 @@ function fullSync() {
     const poolB        = buildPoolB(invoices, today);
     const invoiceSales = buildInvoiceSales(invoices, today);
     const invoiceLain  = buildInvoiceLain(invoices, today);
-    const followUps    = buildFollowUpReminders(invoices, today); // reaktivasi (dormancy)
-    const penagihanBatch = buildPenagihanBatch(invoices, today);  // pesan WA group-by-customer (H-1 → H+14)
+    const todo         = buildTodo(invoices, today);            // 📌 TAGIH (pesan penagihan) + SAPA LAGI (reaktivasi)
     // ⛔ Stop Supply dibangun BELAKANGAN (setelah Rapor Customer) karena kode LIM butuh limit per customer.
     const sales        = computeSalesKpi(invoices);
     const ar           = computeArKpi(invoices, onboard, today);
@@ -130,8 +129,7 @@ function fullSync() {
     migrateTabNames();                       // rename old tabs in place (preserve Pool A/B 🟡 data)
     deleteDeprecatedTabs();                  // drop legacy 'Tagihan Ade'
     writeCaraBacaTab();                       // 📖 onboarding guide (static, rebuilt each sync)
-    writeReaktivasiTab(followUps);            // 📞 customer lama tidak order
-    writePesanTab(penagihanBatch);            // ✉️ pesan WA siap kirim, group-by-customer (master-only)
+    writeTodoTab(todo, 'master');             // 📌 To-Do Harian: siapa di-WA hari ini, pesan terisi
     // 📇 Kontak Customer (master-only) — directory semua customer (nama/WA/telp bisnis).
     // FAIL-SOFT: harvest time-budgeted (drain bertahap); gagal harvest ≠ gagal sync.
     try {
@@ -254,6 +252,10 @@ function fullSync() {
             'deden');
         } catch (e) { Logger.log('Status Customer (Deden) dilewati: ' + e.message); }
       }
+      // 📌 To-Do Kamu — TAGIH + SAPA LAGI untuk customer atas nama dia, dengan Kirim WA.
+      try {
+        writeTodoTab(buildTodo(_bySalesman(invoices, CONFIG.SALES_NAME), today), 'deden');
+      } catch (e) { Logger.log('To-Do (Deden) dilewati: ' + e.message); }
       // 💰 Faktur Collected — rincian faktur di balik angka Collected (bulan lalu + bulan ini).
       // FAIL-SOFT: tab tambahan tak boleh meng-abort sync file Deden (pola blok Restock/Kontak).
       try {
@@ -269,7 +271,7 @@ function fullSync() {
     TARGET_SS = null;                        // back to master for logging
     _log('OK', 'Synced ' + invoices.length + ' invoices · ' + enriched + ' enriched · ' +
               'Pool A ' + poolA.length + ' · Pool B ' + poolB.length + ' · ' +
-              invoiceSales.length + ' di Sales · ' + followUps.length + ' reaktivasi · role: ' +
+              invoiceSales.length + ' di Sales · To-Do ' + todo.tagih.length + ' tagih / ' + todo.sapa.length + ' sapa · role: ' +
               (adeSS ? 'Ade✓' : 'Ade–') + ' ' + (dedenSS ? 'Deden✓' : 'Deden–') + '. ' +
               ((new Date() - t0) / 1000).toFixed(1) + 's');
   } catch (e) {
@@ -949,9 +951,9 @@ function buildInvoiceLain(invoices, today) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// REAKTIVASI — customer yang lama tidak order, urut hari sejak faktur terakhir.
-// (Seksi "Penagihan jatuh tempo" versi To-Do lama dihapus 2026-09-05: duplikat ✉️ Pesan
-// Penagihan, yang memakai window & bucket yang sama plus teks pesannya.)
+// REAKTIVASI — customer yang lama tidak order, urut hari sejak faktur terakhir. Dipakai
+// Todo.gs (seksi SAPA LAGI) dan direncanakan jadi sumber dormant list Qontak; JANGAN
+// disaring di sini, penyaringan (ditahan / sedang ditagih) ada di buildTodo.
 // Pure projection of Pass-1 data — no extra API calls.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1039,61 +1041,6 @@ function computeCustomerTiers(invoices, today) {
                text: tier ? (tier + ' · ' + a.count + '× · ' + rupiah(a.value)) : '' };
   });
   return map;
-}
-
-// Writer — 📞 Reaktivasi Customer (master-only).
-function writeReaktivasiTab(followup) {
-  const sh = uiSheet(CONFIG.TABS.REAKTIVASI);
-  sh.setFrozenRows(0);
-  const H = ['Customer', 'Sales', 'Order Terakhir', 'Hari Sejak Order', 'Bucket', 'Outstanding', 'No. Telp', 'Loyalitas (4bln)'];
-  const SPAN = H.length;
-  let r = 1;
-
-  r = uiBanner(sh, r, SPAN,
-    '📞 Reaktivasi Customer — siapa yang lama tidak order',
-    'Customer diurutkan dari yang paling lama diam sejak faktur terakhir di Accurate. Bahan follow-up sales ' +
-    '(tanya kebutuhan, tawarkan stok), bukan penagihan. Untuk tagihan lihat ✉️ Pesan Penagihan. ' +
-    'Dibuat ulang otomatis tiap jam 5 pagi.',
-    UI.BLUE, UI.BLUE_SOFT);
-
-  uiHeaderRow(sh, r, H); const hrow = r; r++;
-  if (followup.length) {
-    const rows = followup.map(function(c) {
-      return [c.customer, c.salesman || '(POS / online)', fmtDate(c.lastTransDate),
-              c.daysSince, c.bucket, c.outstanding, c.noTlp || '', c.tierText || ''];
-    });
-    const n = rows.length;
-    sh.getRange(r, 1, n, SPAN).setValues(rows).setVerticalAlignment('middle');
-    sh.getRange(r, 1, n, SPAN).setBorder(true, true, true, true, true, true, UI.BORDER, SpreadsheetApp.BorderStyle.SOLID);
-    sh.getRange(r, 6, n, 1).setNumberFormat('"Rp"#,##0');
-    sh.getRange(r, 4, n, 1).setHorizontalAlignment('center');
-    sh.getRange(r, 5, n, 1).setHorizontalAlignment('center');
-    const days = sh.getRange(r, 4, n, 1), tier = sh.getRange(r, 8, n, 1);
-    const R = SpreadsheetApp.newConditionalFormatRule;
-    sh.setConditionalFormatRules([
-      R().whenNumberGreaterThanOrEqualTo(90).setBackground(UI.T_RED).setRanges([days]).build(),
-      R().whenNumberBetween(30, 89).setBackground('#fed7aa').setRanges([days]).build(),
-      R().whenNumberBetween(7, 29).setBackground(UI.T_AMBER).setRanges([days]).build(),
-      R().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges([tier]).build(),
-      R().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges([tier]).build(),
-      R().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges([tier]).build(),
-      R().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges([tier]).build()
-    ]);
-    r += n;
-  } else {
-    sh.getRange(r, 1, 1, SPAN).merge().setValue('✅ Semua customer order dalam 7 hari terakhir.')
-      .setFontColor(UI.NOTE).setFontStyle('italic').setVerticalAlignment('middle');
-    r++;
-  }
-  r++;
-
-  uiFootnote(sh, r, SPAN,
-    '◆ Bucket dari hari sejak ORDER terakhir: H+7 mulai perlu disapa, H+30 dan H+60 kemungkinan pindah supplier, H+90 dianggap hilang. ' +
-    'Outstanding = sisa tagihan customer itu hari ini; kalau ada, selesaikan dulu lewat Pesan Penagihan sebelum menawarkan order baru.');
-
-  [220, 120, 110, 110, 90, 130, 130, 190].forEach(function(px, i) { sh.setColumnWidth(i + 1, px); });
-  sh.setFrozenRows(hrow);
-  return sh;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1421,7 +1368,8 @@ function migrateTabNames() {
 // '📊 Business Health' tab (folded into 📋 Ringkasan 2026-06-05). _MetricSnapshots stays.
 function deleteDeprecatedTabs() {
   const ss = _ss();
-  [CONFIG.TABS.TAGIHAN_ADE, CONFIG.TABS.HEALTH].forEach(function(n) {
+  // + tab yang dilebur ke 📌 To-Do Harian (2026-09-05). Nama literal karena key CONFIG-nya sudah dihapus.
+  [CONFIG.TABS.TAGIHAN_ADE, CONFIG.TABS.HEALTH, '✉️ Pesan Penagihan', '📞 Reaktivasi Customer'].forEach(function(n) {
     const sh = ss.getSheetByName(n);
     if (sh) ss.deleteSheet(sh);
   });

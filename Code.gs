@@ -134,8 +134,9 @@ const CONFIG = {
     [14, 'H+14 · Surat Peringatan dari owner'],
     [30, 'H+30 · Owner ambil alih penuh, sales lepas']
   ],
-  PENAGIHAN_WINDOW_MIN: -3, // tab Pesan mulai H-3 (reminder kantor, jadwal SOP bagian 6)
-  PENAGIHAN_WINDOW_MAX: 14, // tab Pesan cakup faktur daysPastDue ∈ [MIN,14] (window Deden pra-handover)
+  PENAGIHAN_WINDOW_MIN: -3, // To-Do seksi TAGIH mulai H-3 (reminder kantor, jadwal SOP bagian 6)
+  PENAGIHAN_WINDOW_MAX: 14, // To-Do seksi TAGIH cakup faktur daysPastDue ∈ [MIN,14] (window Deden pra-handover)
+  TODO_SAPA_MAX:        30, // To-Do seksi SAPA LAGI dipotong segini per hari (daftar kerja, bukan dump); A/B dulu
   // Aturan dispatch kunjungan (dari diagram flow). Prioritas: Solo > Nearest > Rute > Antri.
   DISPATCH: {
     SOLO_MIN:       2500000,  // outstanding ≥ Rp2,5jt → boleh kunjungan SOLO (jangan nunggu cluster)
@@ -327,8 +328,7 @@ const CONFIG = {
   // Sheet tab names (relabeled 2026-05-30; see TAB_MIGRATION for old→new in-place rename)
   TABS: {
     CARA_BACA:     '📖 Cara Baca',          // onboarding guide (static, rebuilt each sync)
-    REAKTIVASI:    '📞 Reaktivasi Customer', // customer yang lama tidak order, urut hari sejak order terakhir (dulu bagian dari To-Do)
-    PESAN:         '✉️ Pesan Penagihan',     // ready-to-send WA collection messages, group-by-customer (Pesan.gs, master-only)
+    TODO:          '📌 To-Do Harian',        // daftar kerja harian: TAGIH (pesan penagihan) + SAPA LAGI (reaktivasi), Kirim WA (Todo.gs; master + file Deden)
     STOP_SUPPLY:   '⛔ Stop Supply',          // customer lewat jatuh tempo / lewat limit → Nathan tahan SO baru (StopSupply.gs, master-only)
     STATUS_CUST:   '🚦 Status Customer',       // gate harian sales: Boleh Supply? + Sisa Limit per customer (Status.gs; master + file Deden discoped)
     KONTAK:        '📇 Kontak Customer',      // directory semua customer: nama + No WA + No Bisnis (Kontak.gs, master-only)
@@ -363,7 +363,7 @@ const CONFIG = {
     ['Sync Log',       'LOG'],
     // Rapi-rapi nama tab 2026-09-05 (nama lama → key). Dijalankan di master DAN file Ade.
     ['⛔ Stop Supply (HOLD)',  'STOP_SUPPLY'],
-    ['📌 To-Do — Peringatan',  'REAKTIVASI'],
+    ['📌 To-Do — Peringatan',  'TODO'],
     ['📊 KPI Matriks AR',      'THP_ADE'],
     ['📊 KPI Matriks Sales',   'THP_SALES'],
     ['📈 Riwayat THP',         'THP_HISTORY'],
@@ -389,6 +389,7 @@ TABS_DEDEN[CONFIG.TABS.POOL_B]        = '🔵 Faktur Ongoing AR';    // sudah le
 TABS_DEDEN[CONFIG.TABS.THP_SALES]     = '📊 KPI & Gaji Bulan Ini';
 TABS_DEDEN[CONFIG.TABS.THP_HISTORY]   = '📈 Riwayat Gaji';
 TABS_DEDEN[CONFIG.TABS.STATUS_CUST]   = '🚦 Status Customer';       // boleh supply? + sisa limit, semua customer kamu
+TABS_DEDEN[CONFIG.TABS.TODO]          = '📌 To-Do Kamu';            // siapa yang kamu WA hari ini: tagih + sapa lagi
 // CONFIG.TABS.COLLECTED sengaja TIDAK di-alias — '💰 Faktur Collected' dipakai apa adanya.
 
 // Migrasi nama yang sempat dipakai lalu diganti. _applyTabAlias me-rename tab lama ini di

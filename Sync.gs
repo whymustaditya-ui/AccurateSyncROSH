@@ -1267,13 +1267,13 @@ function writeInvoiceLainTab(list, rekap, today) {
   _write(sh, rows);
   fmtRupiah(sh, 6, 6, rows.length);
   // 🏢 Rekap corporate di bawah tabel (Rekap.gs). Satu try sendiri: gagal seksi ≠ gagal tab.
-  let cfRekap = [];
+  let cfRekap = { days: [], tier: [] };
   if (rekap) {
-    try { cfRekap = writeRekapSection(sh, rows.length + 1, rekap, today || stripTime(new Date())) || []; }
+    try { cfRekap = writeRekapSection(sh, rows.length + 1, rekap, today || stripTime(new Date())) || cfRekap; }
     catch (e) { Logger.log('Seksi rekap corporate dilewati: ' + e.message); }
   }
-  const cfLain = [sh.getRange(2, 5, Math.max(rows.length, 1), 1)].concat(cfRekap);
-  const tierRangeLain = sh.getRange(2, 10, Math.max(rows.length, 1), 1);
+  const cfLain = [sh.getRange(2, 5, Math.max(rows.length, 1), 1)].concat(cfRekap.days);
+  const tierLain = [sh.getRange(2, 10, Math.max(rows.length, 1), 1)].concat(cfRekap.tier);
   sh.setConditionalFormatRules([
     SpreadsheetApp.newConditionalFormatRule().whenNumberLessThan(0)
       .setBackground('#fef9c3').setRanges(cfLain).build(),     // Yellow  — belum JT
@@ -1281,10 +1281,10 @@ function writeInvoiceLainTab(list, rekap, today) {
       .setBackground('#fed7aa').setRanges(cfLain).build(),     // Orange  — 0–6 hari
     SpreadsheetApp.newConditionalFormatRule().whenNumberGreaterThanOrEqualTo(7)
       .setBackground('#fecaca').setRanges(cfLain).build(),     // Light red — 7–14 hari
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges([tierRangeLain]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges([tierRangeLain]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges([tierRangeLain]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges([tierRangeLain]).build()
+    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges(tierLain).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges(tierLain).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges(tierLain).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges(tierLain).build()
   ]);
   sh.setColumnWidth(8, 130);
   sh.setColumnWidth(9, 90);    // 📄 Invoice

@@ -156,9 +156,11 @@ function _rekapStatus(i, today) {
 }
 
 // ── Writer: seksi di bawah tabel Tagihan Non-Sales ───────────────────────────
-// startRow = baris kosong pertama setelah tabel utama. Lebar 10 kolom (sama dengan tabel).
+// startRow = baris kosong pertama setelah tabel utama. Lebar 13 kolom: 10 kolom tabel utama +
+// Sales/Sumber · No. Telp · Loyalitas di kolom 11-13 (kolom 12-13 juga dipakai side panel di
+// baris 1-25; seksi ini mulai jauh di bawahnya, tidak bertabrakan).
 function writeRekapSection(sh, startRow, groups, today) {
-  const SPAN = 10;
+  const SPAN = 13;
   let row = startRow + 2;
   sh.getRange(row, 1, 1, SPAN).merge()
     .setValue('🏢 REKAP TAGIHAN CORPORATE + NO. SURAT JALAN')
@@ -177,8 +179,9 @@ function writeRekapSection(sh, startRow, groups, today) {
   row += 2;
 
   const headers = ['No. Invoice', 'Tgl Terbit', 'No. Surat Jalan', 'Jatuh Tempo', 'Hari Lewat JT',
-                   'Nilai Faktur', 'Sudah Bayar', 'Outstanding', 'Status', '📄 Invoice'];
-  const cfRanges = [];
+                   'Nilai Faktur', 'Sudah Bayar', 'Outstanding', 'Status', '📄 Invoice',
+                   'Sales / Sumber', 'No. Telp', 'Loyalitas (4bln)'];
+  const cf = { days: [], tier: [] };
 
   groups.forEach(function(g) {
     const names = Object.keys(g.names);
@@ -206,17 +209,19 @@ function writeRekapSection(sh, startRow, groups, today) {
     const rows = g.rows.map(function(i) {
       return [i.number, fmtDate(i.transDate), i.suratJalan || '', fmtDate(i.dueDate),
               i.daysPastDue == null ? '' : i.daysPastDue, i.total, i.paid, i.outstanding,
-              _rekapStatus(i, today), fakturLinkFormula(i.id, i.number, i.customerId)];
+              _rekapStatus(i, today), fakturLinkFormula(i.id, i.number, i.customerId),
+              i.salesman || '(POS / online)', i.noTlp || '', i.custTierText || ''];
     });
     sh.getRange(row, 1, rows.length, SPAN).setValues(rows);
     sh.getRange(row, 6, rows.length, 3).setNumberFormat('"Rp"#,##0');
     sh.getRange(row, 5, rows.length, 1).setNumberFormat('0');
     sh.getRange(row, 3, rows.length, 1).setWrap(true);
-    cfRanges.push(sh.getRange(row, 5, rows.length, 1));
+    cf.days.push(sh.getRange(row, 5, rows.length, 1));
+    cf.tier.push(sh.getRange(row, 13, rows.length, 1));
     row += rows.length;
 
     sh.getRange(row, 1, 1, SPAN).setValues([
-      ['SUBTOTAL', '', g.rows.length + ' faktur', '', '', g.total, g.paid, g.outstanding, '', '']
+      ['SUBTOTAL', '', g.rows.length + ' faktur', '', '', g.total, g.paid, g.outstanding, '', '', '', '', '']
     ]).setFontWeight('bold').setBackground(UI.BLUE_SOFT);
     sh.getRange(row, 6, 1, 3).setNumberFormat('"Rp"#,##0');
     row += 2;
@@ -226,12 +231,14 @@ function writeRekapSection(sh, startRow, groups, today) {
   const T = groups.reduce(function(s, g) { s.n += g.rows.length; s.t += g.total; s.p += g.paid; s.o += g.outstanding; return s; },
                           { n: 0, t: 0, p: 0, o: 0 });
   sh.getRange(row, 1, 1, SPAN).setValues([
-    ['TOTAL CORPORATE', '', T.n + ' faktur', '', '', T.t, T.p, T.o, '', '']
+    ['TOTAL CORPORATE', '', T.n + ' faktur', '', '', T.t, T.p, T.o, '', '', '', '', '']
   ]).setFontWeight('bold').setBackground(UI.INK).setFontColor(UI.WHITE);
   sh.getRange(row, 6, 1, 3).setNumberFormat('"Rp"#,##0');
 
   sh.setColumnWidth(3, 190);   // No. Surat Jalan (tabel atas: Sales / Sumber ikut melebar, tak apa)
-  return cfRanges;             // warna Hari Lewat JT digabung ke rules tab oleh pemanggil
+  sh.setColumnWidth(11, 130);  // Sales / Sumber (kolom spacer side panel)
+  sh.setColumnWidth(13, 190);  // Loyalitas (side panel kolom angka ikut melebar, tak apa)
+  return cf;                   // {days, tier}: digabung ke rules warna tab oleh pemanggil
 }
 
 // ── Menu / diag ──────────────────────────────────────────────────────────────

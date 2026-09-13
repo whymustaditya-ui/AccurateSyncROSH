@@ -88,6 +88,10 @@ function fullSync() {
     const poolB        = buildPoolB(invoices, today);
     const invoiceSales = buildInvoiceSales(invoices, today);
     const invoiceLain  = buildInvoiceLain(invoices, today);
+    // 🏢 Rekap corporate (seksi di bawah Tagihan Non-Sales): semua faktur terbuka customer di
+    // CONFIG.REKAP_CUSTOMERS + No. Surat Jalan dari detail.do (cache _SjCache, drain bertahap).
+    let rekap = null;
+    try { rekap = buildRekapCorporate(invoices, today); } catch (e) { Logger.log('Rekap corporate dilewati: ' + e.message); }
     const todo         = buildTodo(invoices, today);            // 📌 TAGIH (pesan penagihan) + SAPA LAGI (reaktivasi)
     // ⛔ Stop Supply dibangun BELAKANGAN (setelah Rapor Customer) karena kode LIM butuh limit per customer.
     const sales        = computeSalesKpi(invoices);
@@ -141,7 +145,7 @@ function fullSync() {
     writePoolTab(CONFIG.TABS.POOL_B, poolB, 'B', yB);
     writeRouteTab(routePlan, yR);             // 🗺️ Rute Penagihan
     writeInvoiceSalesTab(invoiceSales);
-    writeInvoiceLainTab(invoiceLain);
+    writeInvoiceLainTab(invoiceLain, rekap, today);
     writeThpSalesTab(sales);
     writeThpAdeTab(ar);
     // THP/KPI archive (master-only): upsert this month's Sales+AR figures into the hidden
@@ -1251,7 +1255,7 @@ function writeInvoiceSalesTab(list) {
 }
 
 // Tagihan Lain — pre-handover invoices outside SALES_FILTER (Nathan/partner, POS, others).
-function writeInvoiceLainTab(list) {
+function writeInvoiceLainTab(list, rekap, today) {
   const sh = _tab(CONFIG.TABS.TAGIHAN_LAIN,
     ['No. Invoice', 'Customer', 'Sales / Sumber', 'Jatuh Tempo', 'Hari Lewat JT',
      'Outstanding', 'Status', 'No. Telp', '📄 Invoice', 'Loyalitas (4bln)']);
@@ -1262,15 +1266,21 @@ function writeInvoiceLainTab(list) {
   });
   _write(sh, rows);
   fmtRupiah(sh, 6, 6, rows.length);
-  const cfRangeLain = sh.getRange(2, 5, Math.max(rows.length, 1), 1);
+  // 🏢 Rekap corporate di bawah tabel (Rekap.gs). Satu try sendiri: gagal seksi ≠ gagal tab.
+  let cfRekap = [];
+  if (rekap) {
+    try { cfRekap = writeRekapSection(sh, rows.length + 1, rekap, today || stripTime(new Date())) || []; }
+    catch (e) { Logger.log('Seksi rekap corporate dilewati: ' + e.message); }
+  }
+  const cfLain = [sh.getRange(2, 5, Math.max(rows.length, 1), 1)].concat(cfRekap);
   const tierRangeLain = sh.getRange(2, 10, Math.max(rows.length, 1), 1);
   sh.setConditionalFormatRules([
     SpreadsheetApp.newConditionalFormatRule().whenNumberLessThan(0)
-      .setBackground('#fef9c3').setRanges([cfRangeLain]).build(),     // Yellow  — belum JT
+      .setBackground('#fef9c3').setRanges(cfLain).build(),     // Yellow  — belum JT
     SpreadsheetApp.newConditionalFormatRule().whenNumberBetween(0, 6)
-      .setBackground('#fed7aa').setRanges([cfRangeLain]).build(),     // Orange  — 0–6 hari
+      .setBackground('#fed7aa').setRanges(cfLain).build(),     // Orange  — 0–6 hari
     SpreadsheetApp.newConditionalFormatRule().whenNumberGreaterThanOrEqualTo(7)
-      .setBackground('#fecaca').setRanges([cfRangeLain]).build(),     // Light red — 7–14 hari
+      .setBackground('#fecaca').setRanges(cfLain).build(),     // Light red — 7–14 hari
     SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges([tierRangeLain]).build(),
     SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges([tierRangeLain]).build(),
     SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges([tierRangeLain]).build(),

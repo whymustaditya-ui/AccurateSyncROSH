@@ -123,6 +123,19 @@ const CONFIG = {
   },
 
   // ── Flow Penagihan Fase 0 (StopSupply.gs / Route.gs dispatch / Pesan.gs batch) ──
+  // Customer yang bayar per rekap tagihan + No. Surat Jalan → seksi 🏢 REKAP TAGIHAN CORPORATE
+  // di bawah tabel 🧾 Tagihan Non-Sales (Rekap.gs, master-only). Match "contains" setelah
+  // normalisasi (PT/CV & tanda baca dibuang), jadi cukup nama intinya.
+  REKAP_CUSTOMERS: [
+    'Sinar Rasa Abadi',
+    'Sinar Rasa Makmur',
+    'Sinar Rasa Cemerlang',
+    'The Akara',
+    'Legenda Kuliner',
+    'LBFoods',
+    'BWC Gudang NB DC Kuningan City'
+  ],
+
   STOP_SUPPLY_DAYS:    1,   // invoice belum bayar ≥ H+1 (lewat jatuh tempo) → customer flag HOLD (Nathan tahan SO baru)
   // Jadwal tindakan penagihan setelah lewat jatuh tempo (Panduan Sales v1.0 bagian 6). Dibaca
   // StopSupply.gs + Status.gs untuk kolom "Tindakan Berikutnya": ambang hari MINIMAL → teks.
@@ -432,6 +445,8 @@ function onOpen() {
     .addItem('Diag item fields', 'diagItemFields')
     .addItem('Diag purchase fields', 'diagPurchaseFields')
     .addItem('Diag cash/bank fields', 'diagCashBankFields')
+    .addItem('Diag surat jalan fields', 'diagSuratJalan')
+    .addItem('Rebuild cache Surat Jalan (wipe + refetch)', 'rebuildSjCacheNow')
     .addSeparator()
     .addItem('Setup role sheets (Ade/Deden)', 'setupRoleSheetsOnce')
     .addToUi();

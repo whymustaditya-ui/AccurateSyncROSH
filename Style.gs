@@ -117,7 +117,7 @@ function writeCaraBacaTab() {
         [CONFIG.TABS.POOL_A, 'Piutang lama sebelum ' + me + ' onboard, beku', 'Burn-down ke Rp0'],
         [CONFIG.TABS.POOL_B, 'Piutang berjalan yang lewat ke ' + me + ' (H+15)', 'Terus bertambah'],
         [CONFIG.TABS.INVOICE_SALES, 'Tagihan yang masih di tangan Sales (H+0 sampai H+14)', ''],
-        [CONFIG.TABS.TAGIHAN_LAIN, 'Tagihan pra-handover di luar Sales (POS, Nathan, lainnya)', ''],
+        [CONFIG.TABS.TAGIHAN_LAIN, 'Tagihan pra-handover di luar Sales (POS, Nathan, lainnya) + seksi Rekap Corporate: semua faktur terbuka customer grup + No. Surat Jalan', ''],
         [CONFIG.TABS.KONTAK, 'Direktori semua customer: nama, No WA, No bisnis', ''],
         [CONFIG.TABS.RESTOCK, 'Saran pembelian per SKU: tier, reorder point, budget', 'Owner'],
         [CONFIG.TABS.THP_ADE, 'Komisi & take-home pay ' + me + ' bulan ini', ''],

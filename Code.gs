@@ -432,6 +432,7 @@ function onOpen() {
     .addItem('Prune Faktur PDFs (hapus lunas)', 'pruneFakturPdfs')
     .addItem('Set Faktur web app URL', 'setFakturWebAppUrl')
     .addItem('Clear Faktur PDF cache', 'clearFakturCache')
+    .addItem('Diag folder Faktur (link 📄 kosong?)', 'diagFakturFolder')
     .addSeparator()
     .addItem('Hitung ulang Riwayat THP bulan lalu', 'restampPreviousMonthNow')
     .addItem('Refresh Restock (item + SKU sales)', 'refreshSkuSalesNow')

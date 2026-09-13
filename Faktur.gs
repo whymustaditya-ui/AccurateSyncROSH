@@ -391,7 +391,11 @@ function _scanFakturFolder() {
       var nm = f.getName().replace(/\.pdf$/i, '');
       if (!map[nm]) map[nm] = f.getId();
     }
-  } catch (e) {}
+  } catch (e) {
+    // Jangan senyap: folder yang tak terbaca = SEMUA link 📄 kosong. Catat di Log + Sync Log.
+    Logger.log('Scan folder Faktur gagal (link 📄 akan kosong): ' + e.message);
+    try { _log('WARN', 'Link 📄 kosong: ' + e.message); } catch (e2) {}
+  }
   return map;
 }
 
@@ -557,12 +561,43 @@ function terbilang(n) {
 // ─────────────────────────────────────────────────────────────────────────────
 // SETUP / ADMIN  (run once from the editor or the ROSH Accurate menu)
 // ─────────────────────────────────────────────────────────────────────────────
+// ⚠ JANGAN auto-recreate kalau folder tidak terbuka. Versi lama jatuh ke setupFakturFolder()
+// begitu getFolderById gagal — dan gagal itu terjadi setiap kali Full Sync diklik oleh akun
+// yang BUKAN pemilik folder (folder di Drive Roshan, tak dishare). Akibatnya folder kosong baru
+// dibuat di Drive akun itu dan FAKTUR_FOLDER_ID DITIMPA, lalu SEMUA link 📄 di semua tab kosong
+// sampai properti diperbaiki (kejadian 2026-09-13). Sekarang: lempar error yang jelas; folder
+// hanya dibuat lewat menu "Setup Faktur folder" oleh pemilik.
 function _fakturFolder() {
   var id = _props().getProperty('FAKTUR_FOLDER_ID');
-  if (id) {
-    try { return DriveApp.getFolderById(id); } catch (e) { /* fall through to recreate */ }
+  if (!id) throw new Error('FAKTUR_FOLDER_ID belum di-set — jalankan menu "Setup Faktur folder" dari akun pemilik (Roshan).');
+  try { return DriveApp.getFolderById(id); }
+  catch (e) {
+    throw new Error('Folder Faktur ' + id + ' tidak bisa dibuka oleh akun ini (' + _runAs() + '). ' +
+                    'Jalankan sync dari akun pemilik folder, atau share folder "' + FAKTUR.FOLDER + '" ke akun ini. ' + e.message);
   }
-  return setupFakturFolder();
+}
+function _runAs() {
+  try { return Session.getEffectiveUser().getEmail() || '(email tersembunyi)'; } catch (e) { return '(tidak diketahui)'; }
+}
+
+/** DIAG — cek folder Faktur yang dipakai link 📄: id, nama, jumlah PDF, siapa yang menjalankan.
+ *  Link 📄 kosong di semua tab ⇒ jalankan ini dari akun yang sama yang tadi klik Full Sync. */
+function diagFakturFolder() {
+  var id = _props().getProperty('FAKTUR_FOLDER_ID');
+  Logger.log('Dijalankan sebagai: ' + _runAs());
+  Logger.log('FAKTUR_FOLDER_ID = ' + (id || '(kosong)'));
+  if (!id) return;
+  try {
+    var f = DriveApp.getFolderById(id);
+    var n = 0, it = f.getFilesByType('application/pdf');
+    while (it.hasNext()) { it.next(); n++; }
+    var owner = ''; try { owner = f.getOwner().getEmail(); } catch (e) {}
+    Logger.log('Folder: ' + f.getName() + ' · owner ' + (owner || '?') + ' · ' + n + ' PDF · trashed=' + f.isTrashed());
+    if (!n) Logger.log('⚠ Folder KOSONG. Kalau ini bukan folder asli Roshan, properti sudah tertimpa: ' +
+                       'Roshan jalankan menu "Setup Faktur folder" untuk menunjuk ulang folder aslinya.');
+  } catch (e) {
+    Logger.log('❌ Folder tidak bisa dibuka: ' + e.message + ' → jalankan dari akun pemilik, atau share folder ke akun ini.');
+  }
 }
 
 function setupFakturFolder() {

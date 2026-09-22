@@ -132,7 +132,10 @@ const CONFIG = {
     'Sinar Rasa Cemerlang',
     'The Akara',
     'Legenda Kuliner',
-    'LBFoods',
+    // Entri boleh berupa string (label = kata kunci pencarian) ATAU objek {label, match}:
+    // label = nama yang DITAMPILKAN di seksi rekap, match = kata kunci yang dicocokkan ke nama
+    // customer di Accurate. Dipakai saat nama di Accurate bukan nama yang dikenal di lapangan.
+    { label: 'Yakiniku Futago Senayan (PT LBfoods Rasa Prima)', match: 'LBFoods' },
     'BWC Gudang NB DC Kuningan City'
   ],
 
@@ -357,6 +360,7 @@ const CONFIG = {
     COLLECTED:     '💰 Faktur Collected',    // rincian faktur per bulan uang masuk (Collected.gs, file Deden saja)
     TAGIHAN_LAIN:  '🧾 Tagihan Non-Sales',    // pre-handover unpaid for everyone NOT in SALES_FILTER (Nathan/partner, POS, others)
     SUMMARY:       '📋 Ringkasan',           // overview
+    REKAP:         '🏢 Rekap Tagihan Corporate', // faktur terbuka customer rekap + No. Surat Jalan + 🟡 Catatan (file Ade; di master jadi seksi di bawah Tagihan Non-Sales)
     RESTOCK:       '📦 Restock Engine',      // SKU tiering + reorder point + cash-capped PO (Restock.gs, master-only)
     HEALTH:        '📊 Business Health',     // strategic dashboard: AR aging, DSO, collection, trends (Health.gs, master-only)
     LOG:           '⚙️ Sync Log',
@@ -448,6 +452,7 @@ function onOpen() {
     .addItem('Diag cash/bank fields', 'diagCashBankFields')
     .addItem('Diag surat jalan fields', 'diagSuratJalan')
     .addItem('Rebuild cache Surat Jalan (wipe + refetch)', 'rebuildSjCacheNow')
+    .addItem('Rapikan tab Info Tukar Faktur', 'formatInfoTukarFakturNow')
     .addSeparator()
     .addItem('Setup role sheets (Ade/Deden)', 'setupRoleSheetsOnce')
     .addToUi();

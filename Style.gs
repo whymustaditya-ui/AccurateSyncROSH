@@ -230,7 +230,8 @@ function orderTabs() {
     CONFIG.TABS.CARA_BACA, CONFIG.TABS.SUMMARY,
     CONFIG.TABS.STATUS_CUST, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.TODO, CONFIG.TABS.RUTE,
     CONFIG.TABS.CUSTOMER, CONFIG.TABS.TURUN_BUKU,
-    CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.TAGIHAN_LAIN, CONFIG.TABS.COLLECTED,
+    CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.TAGIHAN_LAIN,
+    CONFIG.TABS.REKAP, CONFIG.TABS.COLLECTED,
     CONFIG.TABS.KONTAK, CONFIG.TABS.RESTOCK,
     CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
   ];
@@ -245,5 +246,26 @@ function orderTabs() {
     pos++;
     ss.setActiveSheet(sh);
     ss.moveActiveSheet(pos);
+  });
+  _moveTrailingTabs(ss);
+}
+
+// Tab yang TIDAK ditulis script (dibuat tangan atau hasil Google Form, mis. ℹ️ Info Tukar Faktur
+// dan 📋 Hasil Laporan di file ROSH AR) tidak ada di daftar urutan, jadi otomatis terdorong ke
+// kanan. Yang cocok pola di bawah dipaksa ke UJUNG KANAN, urutannya mengikuti urutan pola —
+// Hasil Laporan (jawaban Form) selalu paling kanan. Pencocokan pakai regex supaya rename kecil
+// (emoji, huruf besar-kecil) tidak membuatnya tertinggal di tengah.
+var TRAILING_TAB_PATTERNS = [/tukar\s*faktur/i, /hasil\s*laporan/i];
+
+function _moveTrailingTabs(ss) {
+  TRAILING_TAB_PATTERNS.forEach(function(re) {
+    ss.getSheets().forEach(function(sh) {
+      if (sh.isSheetHidden && sh.isSheetHidden()) return;
+      if (!re.test(sh.getName())) return;
+      try {
+        ss.setActiveSheet(sh);
+        ss.moveActiveSheet(ss.getNumSheets());
+      } catch (e) { Logger.log('Geser tab "' + sh.getName() + '" ke kanan gagal: ' + e.message); }
+    });
   });
 }

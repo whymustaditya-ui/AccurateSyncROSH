@@ -125,6 +125,7 @@ function fullSync() {
     const yB = collectPoolYellow([masterSS, adeSS], CONFIG.TABS.POOL_B);
     const yR = collectRouteYellow([masterSS, adeSS], CONFIG.TABS.RUTE); // Zona/Pin/Status/Tgl/Hasil
     const yCust  = collectCustomerYellow([masterSS]);  // Limit Disetujui / Catatan Nathan
+    const yRekap = collectRekapYellow([adeSS]);        // 📝 Catatan di tab Rekap Corporate (file ROSH AR)
     const yTurun = collectTurunYellow([masterSS]);     // Status gelombang cabut tempo
 
     // ── MASTER (owner) — every tab ──
@@ -214,15 +215,29 @@ function fullSync() {
     writeSummaryTab(ctx, 'master', health);
     orderTabs();                             // arrange tabs L→R for the 3 audiences
 
-    // ── ADE file — Summary (AR-scoped) + Pool A/B (editable 🟡) + KPI AR ──
+    // ── ADE file ("ROSH AR") — Pool A/B (editable 🟡) + Rute + Rekap Corporate ──
+    // 2026-09-22 (Bro): 📋 Ringkasan & 📊 KPI AR (Ade) DICABUT dari file ini — gaji/KPI tinggal
+    // di master, file ini murni alat kerja penagihan. Nama file + nama tab juga tidak lagi
+    // menyebut "Ade" (isinya sama siapa pun yang pegang AR).
     if (adeSS) {
       TARGET_SS = adeSS;
-      migrateTabNames();                     // rename tab lama di file Ade juga (KPI Matriks AR → KPI AR)
-      writeSummaryTab(ctx, 'ade');
+      _renameRoleFile(adeSS, 'ROSH AR');
+      migrateTabNames();                     // rename tab lama di file ini juga (KPI Matriks AR → KPI AR)
+      _dropTabs(['📋 Ringkasan', 'Summary', CONFIG.TABS.THP_ADE, '📊 KPI Matriks AR', 'THP Ade']);
       writePoolTab(CONFIG.TABS.POOL_A, poolA, 'A', yA);
       writePoolTab(CONFIG.TABS.POOL_B, poolB, 'B', yB);
-      writeRouteTab(routePlan, yR);          // 🗺️ Rute Penagihan (Ade's drive list)
-      writeThpAdeTab(ar);
+      writeRouteTab(routePlan, yR);          // 🗺️ Rute Penagihan (daftar jalan penagihan)
+      // 🏢 Rekap Tagihan Corporate — isi sama dengan seksi di master, plus kolom 📝 Catatan
+      // yang boleh diisi tangan (upsert per nomor faktur). FAIL-SOFT: tab tambahan tak boleh
+      // meng-abort sync file ini.
+      if (rekap) {
+        try { writeRekapTab(rekap, today, yRekap); }
+        catch (e) { Logger.log('Rekap Corporate (ROSH AR) dilewati: ' + e.message); }
+      }
+      // ℹ️ Info Tukar Faktur — tab buatan tangan; script cuma merapikan formatnya (Info.gs).
+      try { formatInfoTukarFaktur(adeSS); }
+      catch (e) { Logger.log('Format Info Tukar Faktur dilewati: ' + e.message); }
+      orderTabs();                           // aman: posisi cuma menghitung tab yang benar-benar ada
       _dropDefaultSheet();
     }
 
@@ -1376,6 +1391,23 @@ function migrateTabNames() {
 
 // Remove deprecated tabs: legacy single 'Tagihan Ade' (replaced by Pool A/B) and the old
 // '📊 Business Health' tab (folded into 📋 Ringkasan 2026-06-05). _MetricSnapshots stays.
+// Hapus tab bernama ini dari file yang sedang aktif (TARGET_SS). Dipakai file role untuk
+// membuang tab yang sudah tidak boleh ada di sana (mis. Ringkasan & KPI di file ROSH AR).
+function _dropTabs(names) {
+  const ss = _ss();
+  (names || []).forEach(function(n) {
+    if (!n) return;
+    const sh = ss.getSheetByName(n);
+    if (sh) { try { ss.deleteSheet(sh); } catch (e) { Logger.log('Hapus tab "' + n + '" gagal: ' + e.message); } }
+  });
+}
+
+// Rename file role kalau namanya belum sesuai (id tetap sama → link & Script Property aman).
+function _renameRoleFile(ss, name) {
+  try { if (ss && ss.getName() !== name) ss.rename(name); }
+  catch (e) { Logger.log('Rename file role gagal: ' + e.message); }
+}
+
 function deleteDeprecatedTabs() {
   const ss = _ss();
   // + tab yang dilebur ke 📌 To-Do Harian (2026-09-05). Nama literal karena key CONFIG-nya sudah dihapus.
@@ -1431,7 +1463,7 @@ function _ensureRoleSheet(propKey, name) {
 /** One-time: create (or reuse) Ade & Deden files and share to their Gmail.
  *  Ade = Editor (fills 🟡); Deden = Viewer. Then run fullSync() to populate. */
 function setupRoleSheets(adeEmail, dedenEmail) {
-  const ade   = _ensureRoleSheet('ADE_SHEET_ID',   'ROSH AR — Ade');
+  const ade   = _ensureRoleSheet('ADE_SHEET_ID',   'ROSH AR');
   const deden = _ensureRoleSheet('DEDEN_SHEET_ID', 'ROSH Tagihan — Deden');
   if (adeEmail)   { try { DriveApp.getFileById(ade.getId()).addEditor(adeEmail); }   catch (e) { Logger.log('Share Ade gagal: ' + e.message); } }
   if (dedenEmail) { try { DriveApp.getFileById(deden.getId()).addViewer(dedenEmail); } catch (e) { Logger.log('Share Deden gagal: ' + e.message); } }

@@ -40,6 +40,14 @@ function _rekapMatch(invCustomer, target) {
   return a.indexOf(b) >= 0 || b.indexOf(a) >= 0;
 }
 
+// Entri CONFIG.REKAP_CUSTOMERS boleh string ('The Akara') atau objek
+// { label: 'Yakiniku Futago Senayan (PT LBfoods Rasa Prima)', match: 'LBFoods' }.
+// label = yang dibaca manusia di sheet, match = kata kunci yang dicocokkan ke nama di Accurate.
+function _rekapTarget(t) {
+  if (t && typeof t === 'object') return { label: String(t.label || t.match || ''), match: String(t.match || t.label || '') };
+  return { label: String(t || ''), match: String(t || '') };
+}
+
 function _rekapRp(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
 
 // ── Cache ────────────────────────────────────────────────────────────────────
@@ -130,9 +138,10 @@ function buildRekapCorporate(invoices, today) {
   const targets = CONFIG.REKAP_CUSTOMERS || [];
   const open = invoices.filter(function(i) { return !i.isPaid && i.outstanding > 0; });
   const groups = targets.map(function(t) {
-    const list = open.filter(function(i) { return _rekapMatch(i.customer, t); })
+    const tg = _rekapTarget(t);
+    const list = open.filter(function(i) { return _rekapMatch(i.customer, tg.match); })
       .sort(function(a, b) { return (a.transDate || 0) - (b.transDate || 0); });
-    return { name: t, rows: list, total: 0, paid: 0, outstanding: 0, oldest: null, names: {} };
+    return { name: tg.label, match: tg.match, rows: list, total: 0, paid: 0, outstanding: 0, oldest: null, names: {} };
   });
   const need = [];
   groups.forEach(function(g) { g.rows.forEach(function(i) { need.push(i); }); });
@@ -186,7 +195,7 @@ function writeRekapSection(sh, startRow, groups, today) {
   groups.forEach(function(g) {
     const names = Object.keys(g.names);
     const label = g.name.toUpperCase() +
-      (names.length && _rekapNorm(names[0]) !== _rekapNorm(g.name) ? '  (di Accurate: ' + names.join(' / ') + ')' : '');
+      (names.length && _rekapNorm(names[0]) !== _rekapNorm(g.match || g.name) ? '  (di Accurate: ' + names.join(' / ') + ')' : '');
     sh.getRange(row, 1, 1, SPAN).merge()
       .setValue(label + '  ·  ' + g.rows.length + ' faktur  ·  Outstanding Rp' + _rekapRp(g.outstanding) +
                 (g.oldest != null && g.oldest > 0 ? '  ·  tertua lewat ' + g.oldest + ' hari' : ''))
@@ -241,6 +250,131 @@ function writeRekapSection(sh, startRow, groups, today) {
   return cf;                   // {days, tier}: digabung ke rules warna tab oleh pemanggil
 }
 
+// ── Writer: TAB berdiri sendiri (file ROSH AR) ───────────────────────────────
+// Isi sama dengan seksi di master, tapi jadi tab sendiri + satu kolom 🟡 📝 Catatan yang
+// boleh diisi tangan. Catatan di-UPSERT per NOMOR FAKTUR (pola 🟡 Pool A/B), jadi sync
+// harian tidak menghapus tulisan Ade. Nol call Accurate tambahan — groups-nya sudah dibangun
+// sekali di fullSync (surat jalan ikut cache _SjCache di master).
+var REKAP_TAB_SPAN  = 12;
+var REKAP_NOTE_COL  = 12;   // 📝 Catatan (🟡, satu-satunya kolom yang boleh diisi tangan)
+
+// Kumpulkan catatan yang sudah ada dari file-file yang diberikan, dikunci nomor faktur.
+// Nilai non-kosong dari file BELAKANGAN menang (sama seperti collectPoolYellow).
+function collectRekapYellow(ssList) {
+  const map = {};
+  (ssList || []).forEach(function(ss) {
+    if (!ss) return;
+    const sh = ss.getSheetByName(CONFIG.TABS.REKAP);
+    if (!sh || sh.getLastRow() < 2) return;
+    sh.getRange(1, 1, sh.getLastRow(), REKAP_TAB_SPAN).getValues().forEach(function(r) {
+      const key = String(r[0] || '').trim();
+      const note = r[REKAP_NOTE_COL - 1];
+      if (!key || /^(SUBTOTAL|TOTAL|No\. Invoice)/i.test(key)) return;
+      if (note !== '' && note != null) map[key] = note;
+    });
+  });
+  return map;
+}
+
+function writeRekapTab(groups, today, notes) {
+  notes = notes || {};
+  today = today || stripTime(new Date());
+  const SPAN = REKAP_TAB_SPAN;
+  const sh = uiSheet(CONFIG.TABS.REKAP);
+  sh.setFrozenColumns(0);   // banner ter-merge selebar tab → freeze kolom ditolak Sheets
+  sh.setFrozenRows(0);
+
+  let r = uiBanner(sh, 1, SPAN,
+    '🏢 REKAP TAGIHAN CORPORATE + NO. SURAT JALAN',
+    'Customer yang bayarnya lewat rekap tagihan: semua faktur BELUM LUNAS, tanpa batas umur. ' +
+    'Pakai ini untuk lampiran rekap ke finance customer. No. Surat Jalan = Pengiriman Pesanan di ' +
+    'Accurate; kosong = belum tertarik (nyusul sync berikutnya), "' + SJ_NONE + '" = faktur memang tanpa SJ. ' +
+    'Kolom 📝 Catatan (kuning) boleh kamu isi — tidak akan terhapus sync harian.',
+    UI.INK, UI.BAND);
+  r += 1;
+
+  const headers = ['No. Invoice', 'Tgl Terbit', 'No. Surat Jalan', 'Jatuh Tempo', 'Hari Lewat JT',
+                   'Nilai Faktur', 'Sudah Bayar', 'Outstanding', 'Status', '📄 Invoice',
+                   'Loyalitas (4bln)', '📝 Catatan'];
+  const cfDays = [], cfTier = [], noteRanges = [];
+
+  (groups || []).forEach(function(g) {
+    const names = Object.keys(g.names || {});
+    const label = String(g.name || '').toUpperCase() +
+      (names.length && _rekapNorm(names[0]) !== _rekapNorm(g.match || g.name)
+        ? '  (di Accurate: ' + names.join(' / ') + ')' : '');
+    r = uiSection(sh, r, SPAN,
+      label + '  ·  ' + g.rows.length + ' faktur  ·  Outstanding Rp' + _rekapRp(g.outstanding) +
+      (g.oldest != null && g.oldest > 0 ? '  ·  tertua lewat ' + g.oldest + ' hari' : ''),
+      UI.BLUE);
+
+    if (!g.rows.length) {
+      sh.getRange(r, 1, 1, SPAN).merge()
+        .setValue('Tidak ada faktur terbuka.')
+        .setFontColor(UI.NOTE).setFontStyle('italic');
+      r += 2;
+      return;
+    }
+
+    uiHeaderRow(sh, r, headers);
+    r++;
+
+    const rows = g.rows.map(function(i) {
+      return [i.number, fmtDate(i.transDate), i.suratJalan || '', fmtDate(i.dueDate),
+              i.daysPastDue == null ? '' : i.daysPastDue, i.total, i.paid, i.outstanding,
+              _rekapStatus(i, today), fakturLinkFormula(i.id, i.number, i.customerId),
+              i.custTierText || '', notes[String(i.number)] || ''];
+    });
+    sh.getRange(r, 1, rows.length, SPAN).setValues(rows).setVerticalAlignment('middle');
+    sh.getRange(r, 6, rows.length, 3).setNumberFormat('"Rp"#,##0');
+    sh.getRange(r, 5, rows.length, 1).setNumberFormat('0').setHorizontalAlignment('center');
+    sh.getRange(r, 3, rows.length, 1).setWrap(true);
+    sh.getRange(r, REKAP_NOTE_COL, rows.length, 1)
+      .setBackground(UI.AMBER_BODY).setFontColor(UI.AMBER).setWrap(true);
+    cfDays.push(sh.getRange(r, 5, rows.length, 1));
+    cfTier.push(sh.getRange(r, 11, rows.length, 1));
+    noteRanges.push(sh.getRange(r, REKAP_NOTE_COL, rows.length, 1));
+    r += rows.length;
+
+    sh.getRange(r, 1, 1, SPAN).setValues([
+      ['SUBTOTAL', '', g.rows.length + ' faktur', '', '', g.total, g.paid, g.outstanding, '', '', '', '']
+    ]).setFontWeight('bold').setBackground(UI.BLUE_SOFT);
+    sh.getRange(r, 6, 1, 3).setNumberFormat('"Rp"#,##0');
+    r += 2;
+  });
+
+  const T = (groups || []).reduce(function(s, g) {
+    s.n += g.rows.length; s.t += g.total; s.p += g.paid; s.o += g.outstanding; return s;
+  }, { n: 0, t: 0, p: 0, o: 0 });
+  sh.getRange(r, 1, 1, SPAN).setValues([
+    ['TOTAL CORPORATE', '', T.n + ' faktur', '', '', T.t, T.p, T.o, '', '', '', '']
+  ]).setFontWeight('bold').setBackground(UI.INK).setFontColor(UI.WHITE);
+  sh.getRange(r, 6, 1, 3).setNumberFormat('"Rp"#,##0');
+  r += 2;
+  r = uiFootnote(sh, r, SPAN,
+    'Angka 🔴 ditulis ulang tiap sync pagi — jangan diedit, tulisanmu akan hilang. ' +
+    'Yang kamu isi cuma kolom 📝 Catatan; isinya dikunci ke nomor faktur, jadi tetap menempel ' +
+    'selama faktur itu belum lunas. Faktur lunas otomatis hilang dari daftar (catatannya ikut hilang).');
+
+  if (cfDays.length) {
+    sh.setConditionalFormatRules([
+      SpreadsheetApp.newConditionalFormatRule().whenNumberLessThan(0)
+        .setBackground('#fef9c3').setRanges(cfDays).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenNumberBetween(0, 6)
+        .setBackground('#fed7aa').setRanges(cfDays).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenNumberGreaterThanOrEqualTo(7)
+        .setBackground('#fecaca').setRanges(cfDays).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges(cfTier).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges(cfTier).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges(cfTier).build(),
+      SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges(cfTier).build()
+    ]);
+  }
+
+  [[1, 150], [2, 95], [3, 190], [4, 95], [5, 95], [6, 120], [7, 110], [8, 120],
+   [9, 150], [10, 90], [11, 170], [12, 260]].forEach(function(w) { sh.setColumnWidth(w[0], w[1]); });
+}
+
 // ── Menu / diag ──────────────────────────────────────────────────────────────
 /** Wipe cache SJ lalu tarik ulang lewat sync berikut (dipakai kalau mapping field diganti). */
 function rebuildSjCacheNow() {
@@ -257,7 +391,7 @@ function diagSuratJalan(invoiceId) {
   if (!id) {
     const inv = fetchSalesInvoices().filter(function(i) {
       return !i.isPaid && i.outstanding > 0 &&
-             (CONFIG.REKAP_CUSTOMERS || []).some(function(t) { return _rekapMatch(i.customer, t); });
+             (CONFIG.REKAP_CUSTOMERS || []).some(function(t) { return _rekapMatch(i.customer, _rekapTarget(t).match); });
     })[0];
     if (!inv) { Logger.log('Tidak ada faktur terbuka untuk customer di REKAP_CUSTOMERS.'); return; }
     id = inv.id;

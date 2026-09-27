@@ -352,105 +352,6 @@ function _arRow(sh, r, a, b, c, d) {
   return r + 1;
 }
 
-function writeThpAdeTab(a) {
-  const sh = uiSheet(CONFIG.TABS.THP_ADE);
-  const SPAN = 4;
-  const b = a.bonus;
-  const pct = function(x) { return (x * 100).toFixed(0) + '%'; };
-  let r = 1;
-
-  r = uiBanner(sh, r, SPAN,
-    '📊 KPI & THP Dashboard — ' + CONFIG.AR_OFFICER_NAME,
-    a.notStarted
-      ? '⏳ KPI mulai berlaku ' + CONFIG.ADE_ONBOARD_DATE + ' (hari pertama ' + CONFIG.AR_OFFICER_NAME +
-        '). Semua angka masih 0 — komisi, flag penalty, & bonus belum berjalan sampai tanggal mulai.'
-      : 'Auto-calculate dari Pool A & Pool B · Periode ' + _monthLabel() +
-        ' · Komisi atas masuk kas, bucket dikunci sejak handover.',
-    UI.INK, UI.BAND);
-  r += 1;
-
-  // Komisi headline (green emphasis band)
-  sh.getRange(r, 1, 1, 3).merge().setValue('KOMISI DIPEROLEH BULAN INI')
-    .setBackground(UI.GREEN_SOFT).setFontColor(UI.GREEN).setFontWeight('bold')
-    .setFontSize(12).setVerticalAlignment('middle');
-  sh.getRange(r, 4).setValue(rupiah(a.komisi)).setBackground(UI.GREEN_SOFT)
-    .setFontColor(UI.GREEN).setFontWeight('bold').setFontSize(12)
-    .setHorizontalAlignment('right');
-  sh.setRowHeight(r, 32);
-  r += 2;
-
-  // ── KOMISI per BUCKET ──
-  r = uiSection(sh, r, SPAN, 'KOMISI per BUCKET — aging sejak handover, dikunci di pembayaran pertama', UI.INK);
-  uiHeaderRow(sh, r, ['Bucket', 'Masuk Kas', 'Rate', 'Komisi']); r += 1;
-  r = _arRow(sh, r, '0–30 hari (regular)',  rupiah(a.collected.reg),    '1.5%', rupiah(a.kom.reg));
-  r = _arRow(sh, r, '31–75 hari (aging-1)', rupiah(a.collected.aging1), '2.5%', rupiah(a.kom.aging1));
-  r = _arRow(sh, r, '>75 hari (aging-2)',   rupiah(a.collected.aging2), '3.5%', rupiah(a.kom.aging2));
-  r = _arRow(sh, r, 'Total masuk kas (basis komisi)', rupiah(a.collectedTotal), '', rupiah(a.komisi));
-  sh.getRange(r - 1, 1, 1, SPAN).setBackground(UI.BAND).setFontWeight('bold');
-  r = _arRow(sh, r, '   · dari Pool A (legacy)',   '', '', rupiah(a.komisiPoolA));
-  r = _arRow(sh, r, '   · dari Pool B (berjalan)', '', '', rupiah(a.komisiPoolB));
-  r += 1;
-
-  // ── TAKE-HOME PAY ──
-  r = uiSection(sh, r, SPAN, 'TAKE-HOME PAY', UI.INK);
-  r = _arRow(sh, r, 'Gaji Pokok', rupiah(a.base), '', 'Fixed sejak hari 1');
-  r = _arRow(sh, r, 'Tunjangan Operasional', rupiah(a.ops), '', 'Bensin / pulsa / makan (fixed)');
-  r = _arRow(sh, r, 'Komisi', rupiah(a.komisi), '', 'Variabel — atas masuk kas');
-  r = _arRow(sh, r, 'THP — TOTAL', rupiah(a.thp), 'Floor ' + rupiah(a.floor), 'Take-home pay bulan ini');
-  sh.getRange(r - 1, 1, 1, SPAN).setBackground(UI.GREEN_SOFT).setFontColor(UI.GREEN).setFontWeight('bold');
-  r += 1;
-
-  // Pool A burn-down + Bonus Probation DIHAPUS dari tab 2026-09-05: semua window bonus (Sprint 30 hr,
-  // Milestone/Cleanup 92 hr sejak onboard 2026-06-02) sudah tutup 2 Sep 2026, seksinya tak akan
-  // berubah lagi. Angkanya tetap dihitung di computeArKpi (a.bonus, a.poolA) untuk arsip; kalau
-  // Pool A masih bersisa, satu baris di bawah ini cukup.
-  if (a.poolA && a.poolA.remaining > 0) {
-    r = uiSection(sh, r, SPAN, 'POOL A — SISA BACKLOG LAMA', UI.RED);
-    r = _arRow(sh, r, 'Sisa backlog (target Rp0)', rupiah(a.poolA.remaining), '',
-      'dari ' + rupiah(a.poolA.backlogAtOnboard) + ' saat onboard ' + CONFIG.ADE_ONBOARD_DATE);
-    r += 1;
-  }
-
-  // ── POOL B ──
-  r = uiSection(sh, r, SPAN, 'POOL B — ONGOING AR', UI.BLUE);
-  r = _arRow(sh, r, 'Outstanding Pool B', rupiah(a.poolB.outstanding), a.poolB.count + ' invoice', 'Komisi ' + rupiah(a.poolB.komisi));
-  r += 1;
-
-  // ── FLAG PENALTY ──
-  r = uiSection(sh, r, SPAN, 'FLAG PENALTY — auto-flag · keputusan owner · gugur bila ada follow-up', UI.GOLD);
-  r = _arRow(sh, r, 'Slip ke aging-1 (31–75 hr, belum lunas)', a.flags.regToAging1 + ' invoice', '@' + rupiah(CONFIG.AR_PENALTY_REG_TO_AGING1), '');
-  r = _arRow(sh, r, 'Slip ke aging-2 (>75 hr, belum lunas)', a.flags.aging1ToAging2 + ' invoice', '@' + rupiah(CONFIG.AR_PENALTY_AGING1_TO_AGING2), '');
-  r = _arRow(sh, r, 'Potensi potongan (Tunjangan Ops)', rupiah(a.flags.penaltyPotential), '', 'TIDAK dipotong otomatis — owner cek 🟡 follow-up');
-  r = _arRow(sh, r, 'Clawback komisi', 'Pantau manual', '', 'Bila pembayaran di-void/retur setelah komisi dibayar');
-  r += 1;
-
-  // ── RINCIAN INVOICE KE-FLAG — invoice mana saja yang menyumbang angka di atas ──
-  if (a.flags.list && a.flags.list.length) {
-    r = uiSection(sh, r, SPAN, 'RINCIAN INVOICE KE-FLAG — cek 🟡 follow-up sebelum potong (paling tua di atas)', UI.GOLD);
-    uiHeaderRow(sh, r, ['Faktur', 'Customer', 'Outstanding', 'Umur sejak handover']); r += 1;
-    const flagStart = r;
-    a.flags.list.forEach(function(f) {
-      const tag = f.bucket === 'aging2' ? '🔴 aging-2 (>75 hr)' : '🟠 aging-1 (31–75 hr)';
-      const dueTxt = (f.daysPastDue != null) ? ' · ' + f.daysPastDue + ' hr lewat due' : '';
-      r = _arRow(sh, r, f.number, f.customer, rupiah(f.outstanding),
-        f.dsh + ' hr · ' + tag + dueTxt);
-    });
-    // tint baris aging-2 merah lembut biar yang paling parah menonjol
-    a.flags.list.forEach(function(f, i) {
-      if (f.bucket === 'aging2') sh.getRange(flagStart + i, 1, 1, SPAN).setBackground(UI.RED_SOFT || '#fde8e8');
-    });
-    r += 1;
-  }
-
-  uiFootnote(sh, r, SPAN, '⚠️ Bonus & penalty = keputusan owner, TIDAK auto-apply. THP otomatis = Gaji Pokok + Tunjangan Operasional + Komisi.');
-
-  sh.setColumnWidth(1, 340);
-  sh.setColumnWidth(2, 210);
-  sh.setColumnWidth(3, 260);
-  sh.setColumnWidth(4, 280);
-  sh.setFrozenRows(2); // banner + subtitle
-  return sh;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SUMMARY — dashboard utama (master) / ringkasan per role (Ade, Deden)
@@ -530,13 +431,13 @@ function writeSummaryTab(ctx, role, health) {
     piutangRows.push(['DSO', (health.dso == null ? '—' : health.dso + ' hari'), 'rata-rata hari piutang tertagih · makin kecil makin sehat']);
     piutangRows.push(['Di tangan Sales (H+0–H+14)', rupiah(outstandingSales), ctx.invoiceSales.length + ' faktur → ' + CONFIG.TABS.INVOICE_SALES]);
     piutangRows.push(['Di tangan ' + CONFIG.AR_OFFICER_NAME + ' (Pool A + B)', rupiah(outstandingAde),
-      ctx.poolA.length + ' + ' + ctx.poolB.length + ' faktur → ' + CONFIG.TABS.POOL_A + ' / ' + CONFIG.TABS.POOL_B]);
+      ctx.poolA.length + ' + ' + ctx.poolB.length + ' faktur → ' + CONFIG.TABS.AR_CUSTOMER]);
   } else {
     if (showSales)
       piutangRows.push(['Di tangan Sales (pre-handover)', rupiah(outstandingSales), ctx.invoiceSales.length + ' invoice → ' + CONFIG.TABS.INVOICE_SALES]);
     if (showAr) {
-      piutangRows.push(['Pool A — piutang lama (beku)', rupiah(outstandingA), ctx.poolA.length + ' invoice → ' + CONFIG.TABS.POOL_A]);
-      piutangRows.push(['Pool B — piutang berjalan', rupiah(outstandingB), ctx.poolB.length + ' invoice → ' + CONFIG.TABS.POOL_B]);
+      piutangRows.push(['Pool A — piutang lama (beku)', rupiah(outstandingA), ctx.poolA.length + ' invoice → ' + CONFIG.TABS.AR_CUSTOMER]);
+      piutangRows.push(['Pool B — piutang berjalan', rupiah(outstandingB), ctx.poolB.length + ' invoice → ' + CONFIG.TABS.AR_CUSTOMER]);
       piutangRows.push(['Total di tangan ' + CONFIG.AR_OFFICER_NAME, rupiah(outstandingAde), 'Pool A + Pool B']);
     }
   }
@@ -576,8 +477,7 @@ function writeSummaryTab(ctx, role, health) {
   const gajiRows = [];
   if (showSales) gajiRows.push(['THP ' + CONFIG.SALES_NAME, rupiah(sales.thp),
     'skor KPI ' + (sales.totalScore * 100).toFixed(0) + '% · komisi ' + rupiah(sales.commission) + ' → ' + CONFIG.TABS.THP_SALES]);
-  if (showAr) gajiRows.push(['THP ' + CONFIG.AR_OFFICER_NAME, rupiah(ar.thp),
-    'komisi ' + rupiah(ar.komisi) + ' → ' + CONFIG.TABS.THP_ADE]);
+  // THP AR dicabut 2026-09-27: komisi Ade dihapus (diganti admin tukar faktur), tab KPI AR tidak ada lagi.
   if (isMaster) gajiRows.push(['Riwayat bulanan', '→ ' + CONFIG.TABS.THP_HISTORY, 'Arsip gaji & skor tiap bulan']);
   block('GAJI BULAN INI', UI.BLUE, gajiRows);
 

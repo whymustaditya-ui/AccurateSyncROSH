@@ -51,6 +51,7 @@ const CONFIG = {
   // Accurate setelah sync terakhir bulan itu tapi bertanggal bulan itu. Lewat batas ini
   // baris bulan lalu beku permanen — payroll yang sudah ditutup tak bisa berubah diam-diam.
   THP_RESTAMP_DAYS: 7,
+  AR_KOMISI_LAST_PERIODE: '2026-09', // bulan TERAKHIR komisi Ade dicatat di Riwayat Gaji; sejak itu diganti admin tukar faktur (Bro 2026-09-27)
 
   // ── Sales KPI (Memo KPI Sales Deden) ──
   // THP = Base 3.5jt + Tunjangan(TotalScore × 3.5jt, cap 106%) + Komisi(1.25% × MAX(collected−100jt,0))
@@ -352,6 +353,7 @@ const CONFIG = {
     TURUN_BUKU:    '📉 Turun Buku Piutang',   // program turun AR ke target + NPL + gelombang cabut tempo (TurunBuku.gs, master-only)
     POOL_A:        '🔴 Pool A — Stuck AR',   // FROZEN legacy AR (handover ≤ onboard, unpaid at onboard)
     POOL_B:        '🔵 Pool B — Ongoing AR', // ongoing AR (handover > onboard)
+    AR_CUSTOMER:   '🧾 Tagihan AR per Customer', // Pool A+B digabung, 1 baris per customer + Kirim WA, tanpa customer rekap (TagihanAr.gs, file ROSH AR saja)
     RUTE:          '🗺️ Rute Penagihan',      // Ade's field drive list: zona priority + nearest-neighbour route (Route.gs)
     THP_ADE:       '📊 KPI AR (Ade)',        // AR Officer KPI + take-home pay + penalty flags
     THP_SALES:     '📊 KPI Sales (Deden)',   // Sales KPI + take-home pay
@@ -402,7 +404,6 @@ const CONFIG = {
 var TABS_DEDEN = {};
 TABS_DEDEN[CONFIG.TABS.SUMMARY]       = '📋 Ringkasan';            // tetap — sudah jelas
 TABS_DEDEN[CONFIG.TABS.INVOICE_SALES] = '🧾 Tagihan Kamu';         // yang masih jadi tugas dia (H+0 s/d H+14)
-TABS_DEDEN[CONFIG.TABS.POOL_B]        = '🔵 Faktur Ongoing AR';    // sudah lewat H+14, ditangani Ade, dia pantau
 TABS_DEDEN[CONFIG.TABS.THP_SALES]     = '📊 KPI & Gaji Bulan Ini';
 TABS_DEDEN[CONFIG.TABS.THP_HISTORY]   = '📈 Riwayat Gaji';
 TABS_DEDEN[CONFIG.TABS.STATUS_CUST]   = '🚦 Status Customer';       // boleh supply? + sisa limit, semua customer kamu
@@ -451,7 +452,7 @@ function onOpen() {
     .addItem('Diag purchase fields', 'diagPurchaseFields')
     .addItem('Diag cash/bank fields', 'diagCashBankFields')
     .addItem('Diag surat jalan fields', 'diagSuratJalan')
-    .addItem('Rebuild cache Surat Jalan (wipe + refetch)', 'rebuildSjCacheNow')
+    .addItem('Rebuild cache Surat Jalan / SO (wipe + refetch)', 'rebuildSjCacheNow')
     .addItem('Rapikan tab Info Tukar Faktur', 'formatInfoTukarFakturNow')
     .addSeparator()
     .addItem('Setup role sheets (Ade/Deden)', 'setupRoleSheetsOnce')

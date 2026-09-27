@@ -114,13 +114,11 @@ function writeCaraBacaTab() {
         [CONFIG.TABS.RUTE, 'Daftar jalan penagihan ' + me + ': piutang terbuka per zona, diurut prioritas + rute terdekat', 'Isi Zona & Pin Maps'],
         [CONFIG.TABS.CUSTOMER, 'Rapor per customer: skor bayar, margin bersih, saran limit. Sumber angka Status Customer & Stop Supply', 'Owner, mingguan'],
         [CONFIG.TABS.TURUN_BUKU, 'Jalur bulanan turun ke target piutang + daftar konversi customer lama ke tempo 14 (Hijau/Kuning/Merah)', 'Kemudi bulanan'],
-        [CONFIG.TABS.POOL_A, 'Piutang lama sebelum ' + me + ' onboard, beku', 'Burn-down ke Rp0'],
-        [CONFIG.TABS.POOL_B, 'Piutang berjalan yang lewat ke ' + me + ' (H+15)', 'Terus bertambah'],
+        [CONFIG.TABS.AR_CUSTOMER, 'Piutang di tangan ' + me + ' (Pool A lama + Pool B lewat H+14), satu baris per customer, pesan WA berisi semua faktur gantung. Customer rekap corporate tidak ikut', 'Tap Kirim WA'],
         [CONFIG.TABS.INVOICE_SALES, 'Tagihan yang masih di tangan Sales (H+0 sampai H+14)', ''],
         [CONFIG.TABS.TAGIHAN_LAIN, 'Tagihan pra-handover di luar Sales (POS, Nathan, lainnya) + seksi Rekap Corporate: semua faktur terbuka customer grup + No. Surat Jalan', ''],
         [CONFIG.TABS.KONTAK, 'Direktori semua customer: nama, No WA, No bisnis', ''],
         [CONFIG.TABS.RESTOCK, 'Saran pembelian per SKU: tier, reorder point, budget', 'Owner'],
-        [CONFIG.TABS.THP_ADE, 'Komisi & take-home pay ' + me + ' bulan ini', ''],
         [CONFIG.TABS.THP_SALES, 'KPI & take-home pay ' + CONFIG.SALES_NAME + ' bulan ini', ''],
         [CONFIG.TABS.THP_HISTORY, 'Arsip gaji & performa Sales / AR per bulan', '']
       ] },
@@ -129,8 +127,7 @@ function writeCaraBacaTab() {
       rows: [
         ['Pool A — Stuck AR', 'Semua invoice overdue SEBELUM ' + me + ' onboard. Snapshot frozen di hari pertama.', 'Tidak bertambah. Berkurang hanya saat customer bayar.'],
         ['Pool B — Ongoing AR', 'Invoice yang jatuh tempo & handover H+15 SETELAH onboard.', 'Sales handle H+0–H+14. ' + me + ' ambil alih dari H+15.'],
-        ['Tgl Handover (H+15)', 'Tgl Jatuh Tempo + 15 hari. Titik invoice resmi jadi tanggungan ' + me + '.', 'Jam komisi mulai berdetak dari sini.'],
-        ['Aging saat Collect', 'Selisih hari Tgl Handover → Tgl Bayar. Penentu bucket komisi.', 'Dikunci di pembayaran pertama (partial = bucket tetap).']
+        ['Tgl Handover (H+15)', 'Tgl Jatuh Tempo + 15 hari. Titik invoice resmi jadi tanggungan ' + me + '.', '']
       ] },
     { band: 'RUTE PENAGIHAN — DAFTAR JALAN', color: UI.GREEN,
       header: ['Konsep', 'Penjelasan', 'Catatan'],
@@ -143,28 +140,11 @@ function writeCaraBacaTab() {
         ['Urutan titik', 'Dalam zona, diurut nearest-neighbour dari pin (mulai tagihan terbesar).', 'Tinggal ikut Urutan 1→bawah'],
         ['Belum dizonakan', 'Customer tanpa Zona dikumpulkan paling bawah — sinyal buat diisi.', 'Tidak ikut ranking sampai diisi']
       ] },
-    { band: 'SKEMA KOMISI', color: UI.INK,
-      header: ['Bucket (hari sejak handover)', 'Rate × masuk kas', 'Setara overdue'],
-      rows: [
-        ['0–30 hari', '1.5%', '15–45 hari lewat JT'],
-        ['31–75 hari', '2.5%', '46–90 hari lewat JT'],
-        ['>75 hari', '3.5%', '91+ hari lewat JT'],
-        ['Partial payment', 'Komisi dihitung dari jumlah yang MASUK KAS (bukan nilai penuh invoice)', 'Bucket dikunci di bayar pertama'],
-        ['Clawback', 'Komisi bisa ditarik bila pembayaran di-void / retur setelah dibayar', 'Pantau manual']
-      ] },
-    { band: 'BONUS PROBATION — POOL A SAJA', color: UI.BLUE,
-      header: ['Bonus', 'Target', 'Reward'],
-      rows: [
-        ['Sprint', '≥ ' + rupiah(CONFIG.AR_SPRINT_TARGET) + ' dalam ' + CONFIG.AR_SPRINT_WINDOW_DAYS + ' hari sejak onboard', rupiah(CONFIG.AR_SPRINT_BONUS)],
-        ['Milestone', '≥ ' + rupiah(CONFIG.AR_MILESTONE_TARGET) + ' dalam 3 bulan (kumulatif)', rupiah(CONFIG.AR_MILESTONE_BONUS)],
-        ['Cleanup', 'Sisa Pool A < ' + rupiah(CONFIG.AR_CLEANUP_CEILING) + ' di akhir bulan ke-3', rupiah(CONFIG.AR_CLEANUP_BONUS)]
-      ] },
     { band: 'STANDAR DOKUMENTASI FOLLOW-UP', color: UI.GREEN,
       header: ['Aturan', 'Detail', 'Catatan'],
       rows: [
-        ['Frekuensi minimal', '1 entri per customer per minggu', 'Wajib agar penalty tidak diterapkan'],
+        ['Frekuensi minimal', '1 entri per customer per minggu', 'Di tab ' + CONFIG.TABS.AR_CUSTOMER],
         ['Isi entri', 'Tanggal + Channel (WA/Telp/Visit) + Hasil Negosiasi', 'kolom 🟡'],
-        ['Penalty aging naik bucket', '31–75 hr: ' + rupiah(CONFIG.AR_PENALTY_REG_TO_AGING1) + ' · >75 hr: ' + rupiah(CONFIG.AR_PENALTY_AGING1_TO_AGING2) + ' / invoice', 'Auto-flag; gugur bila ada follow-up terdokumentasi'],
         ['Akses', me + ': edit kolom 🟡 saja · Owner: full', 'Kolom 🔴 dikunci otomatis oleh script']
       ] },
     { band: 'LOYALITAS CUSTOMER (A/B/C/D) — ' + CONFIG.CUST_TIER.WINDOW_MONTHS + ' bulan terakhir', color: UI.GOLD,
@@ -175,24 +155,16 @@ function writeCaraBacaTab() {
         ['C', CONFIG.CUST_TIER.C_MIN + '–' + (CONFIG.CUST_TIER.B_MIN - 1) + '×', 'Sedang', UI.T_AMBER],
         ['D', '1×', 'Baru / jarang — boleh lebih tegas', UI.T_GREY],
         ['(kosong)', '0× dalam ' + CONFIG.CUST_TIER.WINDOW_MONTHS + ' bln', 'Tidak aktif di window ini'],
-        ['Format kolom', 'Huruf · jumlah transaksi · nilai (mis. "B · 7× · Rp45.000.000")', 'Info saja — tidak mengubah komisi/penalty'],
+        ['Format kolom', 'Huruf · jumlah transaksi · nilai (mis. "B · 7× · Rp45.000.000")', 'Info saja — tidak mengubah tagihan'],
         ['Beda dengan kredit', 'Loyalitas = seberapa SERING dia order. Boleh dikasih tempo atau tidak = kolom Keputusan di Rapor Customer / Boleh Supply? di Status Customer. Dua hal berbeda.', 'Customer A bisa saja ditahan']
-      ] },
-    { band: 'TAKE-HOME PAY', color: UI.INK,
-      header: ['Komponen', 'Nilai', 'Catatan'],
-      rows: [
-        ['Gaji Pokok', rupiah(CONFIG.AR_BASE), 'Fixed sejak hari 1'],
-        ['Tunjangan Operasional', rupiah(CONFIG.AR_TUNJANGAN_OPS), 'Bensin / pulsa / makan'],
-        ['Komisi', 'Variabel', 'Atas masuk kas, sesuai bucket'],
-        ['THP Floor', rupiah(CONFIG.AR_BASE + CONFIG.AR_TUNJANGAN_OPS), 'Sebelum komisi & bonus']
       ] },
     { band: 'COLOR CODING STATUS', color: UI.GOLD,
       header: ['Status', 'Arti', ''],
       rows: [
-        ['🟢 Lunas', 'Invoice dibayar penuh. Komisi sudah dihitung.', '', UI.T_GREEN],
-        ['🟡 Partial', 'Customer bayar sebagian. Outstanding masih ada. Komisi dari yang masuk.', '', UI.T_AMBER],
+        ['🟢 Lunas', 'Invoice dibayar penuh.', '', UI.T_GREEN],
+        ['🟡 Partial', 'Customer bayar sebagian. Outstanding masih ada.', '', UI.T_AMBER],
         ['🔴 Open', 'Belum ada pembayaran sama sekali.', '', UI.T_RED],
-        ['🟡 Kolom kuning', 'Input ' + me + ': Channel, Hasil Negosiasi, Tgl Follow-up, Bukti Transfer', '', UI.AMBER_BODY],
+        ['🟡 Kolom kuning', 'Input ' + me + ': Channel, Hasil Negosiasi, Tgl Follow-up, Catatan (per customer)', '', UI.AMBER_BODY],
         ['🔴 Kolom merah/abu', 'Otomatis dari script — jangan diedit', '', UI.T_GREY]
       ] }
   ];
@@ -228,12 +200,12 @@ function orderTabs() {
   // sales support → gaji → log.
   const order = [
     CONFIG.TABS.CARA_BACA, CONFIG.TABS.SUMMARY,
-    CONFIG.TABS.STATUS_CUST, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.TODO, CONFIG.TABS.RUTE,
+    CONFIG.TABS.STATUS_CUST, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.TODO, CONFIG.TABS.AR_CUSTOMER, CONFIG.TABS.RUTE,
     CONFIG.TABS.CUSTOMER, CONFIG.TABS.TURUN_BUKU,
     CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.TAGIHAN_LAIN,
     CONFIG.TABS.REKAP, CONFIG.TABS.COLLECTED,
     CONFIG.TABS.KONTAK, CONFIG.TABS.RESTOCK,
-    CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_ADE, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
+    CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
   ];
   // Position counts only the tabs THIS file actually has. Using the array index would
   // aim past the last sheet in a role file (Deden has ~4 tabs, the array has 16) and

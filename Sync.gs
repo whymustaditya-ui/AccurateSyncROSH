@@ -126,6 +126,8 @@ function fullSync() {
     const yR = collectRouteYellow([masterSS, adeSS], CONFIG.TABS.RUTE); // Zona/Pin/Status/Tgl/Hasil
     const yCust  = collectCustomerYellow([masterSS]);  // Limit Disetujui / Catatan Nathan
     const yRekap = collectRekapYellow([adeSS]);        // 📝 Catatan di tab Rekap Corporate (file ROSH AR)
+    const yArc   = collectArCustomerYellow([masterSS, adeSS]); // 🟡 per customer di tab Tagihan AR per Customer (Ade menang)
+    const arCust = buildArCustomers(invoices, today);            // Pool A+B per customer (master + ROSH AR)
     const yTurun = collectTurunYellow([masterSS]);     // Status gelombang cabut tempo
 
     // ── MASTER (owner) — every tab ──
@@ -142,13 +144,15 @@ function fullSync() {
       writeKontakTab();
     } catch (e) { Logger.log('Kontak Customer dilewati: ' + e.message); }
     if (restock) writeRestockTab(restock);    // 📦 Restock Engine — saran pembelian per SKU (master-only)
-    writePoolTab(CONFIG.TABS.POOL_A, poolA, 'A', yA);
-    writePoolTab(CONFIG.TABS.POOL_B, poolB, 'B', yB);
+    // 🧾 Tagihan AR per Customer menggantikan Pool A/B (2026-09-27: komisi Ade dihapus, jadi Pool
+    // per faktur tidak lagi dibutuhkan). Gagal → Pool A/B ditulis seperti dulu.
+    writeArCustomerOrPools(arCust, yArc, yA, yB, poolA, poolB);
     writeRouteTab(routePlan, yR);             // 🗺️ Rute Penagihan
     writeInvoiceSalesTab(invoiceSales);
     writeInvoiceLainTab(invoiceLain, rekap, today);
     writeThpSalesTab(sales);
-    writeThpAdeTab(ar);
+    // 📊 KPI AR (Ade) DICABUT 2026-09-27: komisi Ade dihapus, diganti admin tukar faktur.
+    _dropTabs([CONFIG.TABS.THP_ADE]);
     // THP/KPI archive (master-only): upsert this month's Sales+AR figures into the hidden
     // `_ThpHistory` ledger, then render the 📈 Riwayat THP tab from it. Record FIRST so the
     // tab reflects the freshly-stamped current month. Mirrors the snapshot→render order below.
@@ -223,9 +227,9 @@ function fullSync() {
       TARGET_SS = adeSS;
       _renameRoleFile(adeSS, 'ROSH AR');
       migrateTabNames();                     // rename tab lama di file ini juga (KPI Matriks AR → KPI AR)
+      // 2026-09-27 (Bro): Pool A + B DIGABUNG jadi 🧾 Tagihan AR per Customer, sama dengan master.
       _dropTabs(['📋 Ringkasan', 'Summary', CONFIG.TABS.THP_ADE, '📊 KPI Matriks AR', 'THP Ade']);
-      writePoolTab(CONFIG.TABS.POOL_A, poolA, 'A', yA);
-      writePoolTab(CONFIG.TABS.POOL_B, poolB, 'B', yB);
+      writeArCustomerOrPools(arCust, yArc, yA, yB, poolA, poolB);
       writeRouteTab(routePlan, yR);          // 🗺️ Rute Penagihan (daftar jalan penagihan)
       // 🏢 Rekap Tagihan Corporate — isi sama dengan seksi di master, plus kolom 📝 Catatan
       // yang boleh diisi tangan (upsert per nomor faktur). FAIL-SOFT: tab tambahan tak boleh
@@ -252,13 +256,11 @@ function fullSync() {
       // pasang alias — kalau terbalik, writer bikin tab baru & yang lama jadi sampah.
       _applyTabAlias(dedenSS, TABS_DEDEN);
       TAB_ALIAS = TABS_DEDEN;
-      const poolBDeden = _bySalesman(poolB, CONFIG.SALES_NAME);
       writeSummaryTab(ctx, 'deden');
       writeInvoiceSalesTab(invoiceSales);
-      writePoolTab(CONFIG.TABS.POOL_B, poolBDeden, 'B', yB,
-        'Customer kamu yang tagihannya sudah lewat H+14 dan pindah ke ' + CONFIG.AR_OFFICER_NAME +
-        '. Penagihan jadi tugas ' + CONFIG.AR_OFFICER_NAME + '; tab ini untuk kamu pantau saja (lihat, tidak diisi).',
-        true);                               // viewOnly — semua kolom read-only di file Deden
+      // Pool B (pantau) DICABUT dari file Deden 2026-09-27: 🟡 follow-up Ade tidak lagi per faktur dan
+      // kolom Komisi sudah tak berlaku. Customer dia yang macet sudah terlihat di 🚦 Status Customer.
+      _dropTabs(['🔵 Faktur Ongoing AR', CONFIG.TABS.POOL_B]);
       // 🚦 Status Customer — versi Deden: baris yang sama dengan master, disaring ke customer
       // yang salesman-nya dia (_bySalesman pada baris status). Outstanding & limit tetap
       // level customer (bukan cuma faktur dia): customer yang ditahan ya ditahan, siapa pun

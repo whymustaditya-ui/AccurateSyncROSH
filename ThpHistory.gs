@@ -90,7 +90,7 @@ function recordThpHistory(sales, ar, today) {
     sales.tunjangan, sales.commission, sales.totalScore, sales.collected, sales.noo, stamp
   ]);
 
-  if (ar && !ar.notStarted) {
+  if (ar && !ar.notStarted && periode <= CONFIG.AR_KOMISI_LAST_PERIODE) {   // komisi AR berhenti, arsip lama tetap
     _upsertThpRow(periode, 'ar', [
       periode, 'ar', CONFIG.AR_OFFICER_NAME, ar.thp, ar.base,
       ar.ops, ar.komisi, '', ar.collectedTotal, '', stamp
@@ -146,7 +146,7 @@ function restampMonth(invoices, ms, today) {
   // AR only from Ade's onboard month onward (same rule as recordThpHistory's notStarted).
   const onboard = _onboardDate();
   let a = null;
-  if (ms >= new Date(onboard.getFullYear(), onboard.getMonth(), 1)) {
+  if (ms >= new Date(onboard.getFullYear(), onboard.getMonth(), 1) && periode <= CONFIG.AR_KOMISI_LAST_PERIODE) {
     a = _arMonthFigures(invoices, ms, onboard);
     _upsertThpRow(periode, 'ar', [
       periode, 'ar', CONFIG.AR_OFFICER_NAME,

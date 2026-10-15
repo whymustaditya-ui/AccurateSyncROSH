@@ -348,17 +348,16 @@ const CONFIG = {
   TABS: {
     CARA_BACA:     '📖 Cara Baca',          // onboarding guide (static, rebuilt each sync)
     TODO:          '📌 To-Do Harian',        // daftar kerja harian: TAGIH (pesan penagihan) + SAPA LAGI (reaktivasi), Kirim WA (Todo.gs; master + file Deden)
-    REMINDER:      '🔔 Reminder Payment',    // seksi TAGIH dari To-Do, untuk admin (Todo.gs role 'admin'; file ROSH AR saja)
     STOK:          '📦 Stok Barang',         // stok vs target ½ demand/bln, tanpa harga (Restock.gs writeStokAdminTab; file ROSH AR saja)
     STOP_SUPPLY:   '⛔ Stop Supply',          // customer lewat jatuh tempo / lewat limit → Nathan tahan SO baru (StopSupply.gs, master-only)
     STATUS_CUST:   '🚦 Status Customer',       // gate harian sales: Boleh Supply? + Sisa Limit per customer (Status.gs; master + file Deden discoped)
     KONTAK:        '📇 Kontak Customer',      // directory semua customer: nama + No WA + No Bisnis (Kontak.gs, master-only)
     CUSTOMER:      '🧭 Rapor Customer',       // gate order baru + saran limit & tempo per customer (Customer.gs, master-only)
-    TURUN_BUKU:    '📉 Turun Buku Piutang',   // program turun AR ke target + NPL + gelombang cabut tempo (TurunBuku.gs, master-only)
+    TURUN_BUKU:    '📉 Turun Buku Piutang',   // DICABUT 2026-10-15 (tidak dipakai) → di-_dropTabs; _glidePath tetap dipakai Ringkasan
     POOL_A:        '🔴 Pool A — Stuck AR',   // FROZEN legacy AR (handover ≤ onboard, unpaid at onboard)
     POOL_B:        '🔵 Pool B — Ongoing AR', // ongoing AR (handover > onboard)
     AR_CUSTOMER:   '🧾 Tagihan AR per Customer', // Pool A+B digabung, 1 baris per customer + Kirim WA, tanpa customer rekap (TagihanAr.gs, file ROSH AR saja)
-    RUTE:          '🗺️ Rute Penagihan',      // Ade's field drive list: zona priority + nearest-neighbour route (Route.gs)
+    RUTE:          '🗺️ Rute Penagihan',      // DICABUT 2026-10-15 (tidak dipakai) → di-_dropTabs master + ROSH AR; Route.gs tak dipanggil lagi
     THP_ADE:       '📊 KPI AR (Ade)',        // AR Officer KPI + take-home pay + penalty flags
     THP_SALES:     '📊 KPI Sales (Deden)',   // Sales KPI + take-home pay
     THP_HISTORY:   '📈 Riwayat Gaji',        // monthly payroll/KPI archive per person (ThpHistory.gs)
@@ -367,7 +366,7 @@ const CONFIG = {
     TAGIHAN_LAIN:  '🧾 Tagihan Non-Sales',    // pre-handover unpaid for everyone NOT in SALES_FILTER (Nathan/partner, POS, others)
     SUMMARY:       '📋 Ringkasan',           // overview
     REKAP:         '🏢 Rekap Tagihan Corporate', // faktur terbuka customer rekap + No. Surat Jalan + 🟡 Catatan (file Ade; di master jadi seksi di bawah Tagihan Non-Sales)
-    RESTOCK:       '📦 Restock Engine',      // SKU tiering + reorder point + cash-capped PO (Restock.gs, master-only)
+    RESTOCK:       '📦 Restock Engine',      // DICABUT 2026-10-15 (tidak dipakai) → di-_dropTabs; computeRestock tetap jalan untuk 📦 Stok Barang
     HEALTH:        '📊 Business Health',     // strategic dashboard: AR aging, DSO, collection, trends (Health.gs, master-only)
     LOG:           '⚙️ Sync Log',
     TAGIHAN_ADE:   'Tagihan Ade'           // DEPRECATED → auto-deleted by fullSync (replaced by Pool A/B)
@@ -444,10 +443,10 @@ function onOpen() {
     .addItem('Diag folder Faktur (link 📄 kosong?)', 'diagFakturFolder')
     .addSeparator()
     .addItem('Hitung ulang Riwayat THP bulan lalu', 'restampPreviousMonthNow')
-    .addItem('Refresh Restock (item + SKU sales)', 'refreshSkuSalesNow')
+    .addItem('Refresh Stok Barang (item + SKU sales)', 'refreshSkuSalesNow')
     .addItem('Refresh Kontak Customer', 'refreshKontakNow')
     .addItem('Rebuild Kontak cache (wipe + refetch)', 'rebuildKontakCacheNow')
-    .addItem('Refresh Rapor Customer + Turun Buku + Stop Supply + Status', 'refreshCustomerNow')
+    .addItem('Refresh Rapor Customer + Stop Supply + Status', 'refreshCustomerNow')
     .addItem('Bersihkan kolom kuning (sekali, setelah ganti layout)', 'clearYellowAfterLayoutChangeNow')
     .addItem('Diag vendorPrice (cek sebelum buka margin)', 'diagVendorPrice')
     .addItem('Diag jual di bawah modal', 'diagBelowCost')

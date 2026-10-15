@@ -111,14 +111,12 @@ function writeCaraBacaTab() {
         [CONFIG.TABS.STATUS_CUST, 'Gate sebelum buat SO: Boleh Supply? YA/TIDAK, cara bayar, limit & sisa limit tiap customer. Versi Deden hanya customer dia', 'Sales cek tiap order'],
         [CONFIG.TABS.STOP_SUPPLY, 'Customer yang ditahan: lewat jatuh tempo (OVD) atau lewat limit (LIM), sejak kapan, tindakan berikutnya', 'Nathan tahan SO'],
         [CONFIG.TABS.TODO, 'Daftar kerja harian: siapa ditagih (H-3 → H+14) dan siapa disapa lagi (lama tidak order), pesan WA sudah terisi', 'Tap Kirim WA'],
-        [CONFIG.TABS.RUTE, 'Daftar jalan penagihan ' + me + ': piutang terbuka per zona, diurut prioritas + rute terdekat', 'Isi Zona & Pin Maps'],
         [CONFIG.TABS.CUSTOMER, 'Rapor per customer: skor bayar, margin bersih, saran limit. Sumber angka Status Customer & Stop Supply', 'Owner, mingguan'],
-        [CONFIG.TABS.TURUN_BUKU, 'Jalur bulanan turun ke target piutang + daftar konversi customer lama ke tempo 14 (Hijau/Kuning/Merah)', 'Kemudi bulanan'],
         [CONFIG.TABS.AR_CUSTOMER, 'Piutang di tangan ' + me + ' (Pool A lama + Pool B lewat H+14), satu baris per customer, pesan WA berisi semua faktur gantung. Customer rekap corporate tidak ikut', 'Tap Kirim WA'],
         [CONFIG.TABS.INVOICE_SALES, 'Tagihan yang masih di tangan Sales (H+0 sampai H+14)', ''],
         [CONFIG.TABS.TAGIHAN_LAIN, 'Tagihan pra-handover di luar Sales (POS, Nathan, lainnya) + seksi Rekap Corporate: semua faktur terbuka customer grup + No. Surat Jalan', ''],
         [CONFIG.TABS.KONTAK, 'Direktori semua customer: nama, No WA, No bisnis', ''],
-        [CONFIG.TABS.RESTOCK, 'Saran pembelian per SKU: tier, reorder point, budget', 'Owner'],
+        [CONFIG.TABS.STOK, 'Stok tersedia vs target (½ demand/bln) dan saran order per SKU, tanpa harga. Ada di file ROSH AR', 'Admin'],
         [CONFIG.TABS.THP_SALES, 'KPI & take-home pay ' + CONFIG.SALES_NAME + ' bulan ini', ''],
         [CONFIG.TABS.THP_HISTORY, 'Arsip gaji & performa Sales / AR per bulan', '']
       ] },
@@ -128,17 +126,6 @@ function writeCaraBacaTab() {
         ['Pool A — Stuck AR', 'Semua invoice overdue SEBELUM ' + me + ' onboard. Snapshot frozen di hari pertama.', 'Tidak bertambah. Berkurang hanya saat customer bayar.'],
         ['Pool B — Ongoing AR', 'Invoice yang jatuh tempo & handover H+15 SETELAH onboard.', 'Sales handle H+0–H+14. ' + me + ' ambil alih dari H+15.'],
         ['Tgl Handover (H+15)', 'Tgl Jatuh Tempo + 15 hari. Titik invoice resmi jadi tanggungan ' + me + '.', '']
-      ] },
-    { band: 'RUTE PENAGIHAN — DAFTAR JALAN', color: UI.GREEN,
-      header: ['Konsep', 'Penjelasan', 'Catatan'],
-      rows: [
-        ['Sumber', 'Semua piutang terbuka ' + me + ' (Pool A + Pool B), digabung per CUSTOMER.', '1 customer = 1 titik kunjungan'],
-        ['Zona (auto)', 'Kecamatan dibaca dari teks alamat (kata "Kecamatan"), fallback geocode. Read-only — dipakai kalau Zona kosong.', 'Bisa meleset → koreksi di kolom Zona'],
-        ['Zona / Kecamatan', 'Diisi ' + me + ' (kolom 🟡) bila tebakan auto salah/kosong. Input ' + me + ' menang.', 'Nempel terus antar-sync'],
-        ['Pin Maps', 'Tempel link Google Maps (share → copy link), termasuk maps.app.goo.gl.', 'Presisi; kalau kosong pakai koordinat geocode'],
-        ['Prioritas zona', 'total Outstanding × (1 + umur tertua × ' + CONFIG.ROUTE.AGING_WEIGHT + '). Banyak tunggakan kecil tapi tua tetap naik.', 'Lihat panel "Prioritas Zona"'],
-        ['Urutan titik', 'Dalam zona, diurut nearest-neighbour dari pin (mulai tagihan terbesar).', 'Tinggal ikut Urutan 1→bawah'],
-        ['Belum dizonakan', 'Customer tanpa Zona dikumpulkan paling bawah — sinyal buat diisi.', 'Tidak ikut ranking sampai diisi']
       ] },
     { band: 'STANDAR DOKUMENTASI FOLLOW-UP', color: UI.GREEN,
       header: ['Aturan', 'Detail', 'Catatan'],
@@ -200,11 +187,11 @@ function orderTabs() {
   // sales support → gaji → log.
   const order = [
     CONFIG.TABS.CARA_BACA, CONFIG.TABS.SUMMARY,
-    CONFIG.TABS.STATUS_CUST, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.TODO, CONFIG.TABS.REMINDER, CONFIG.TABS.AR_CUSTOMER, CONFIG.TABS.RUTE,
-    CONFIG.TABS.CUSTOMER, CONFIG.TABS.TURUN_BUKU,
+    CONFIG.TABS.STATUS_CUST, CONFIG.TABS.STOP_SUPPLY, CONFIG.TABS.TODO, CONFIG.TABS.AR_CUSTOMER,
+    CONFIG.TABS.CUSTOMER,
     CONFIG.TABS.POOL_A, CONFIG.TABS.POOL_B, CONFIG.TABS.INVOICE_SALES, CONFIG.TABS.TAGIHAN_LAIN,
     CONFIG.TABS.REKAP, CONFIG.TABS.COLLECTED,
-    CONFIG.TABS.KONTAK, CONFIG.TABS.RESTOCK, CONFIG.TABS.STOK,
+    CONFIG.TABS.KONTAK, CONFIG.TABS.STOK,
     CONFIG.TABS.THP_SALES, CONFIG.TABS.THP_HISTORY, CONFIG.TABS.LOG
   ];
   // Position counts only the tabs THIS file actually has. Using the array index would

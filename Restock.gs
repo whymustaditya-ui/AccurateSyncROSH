@@ -1042,10 +1042,15 @@ function refreshSkuSalesNow() {
   try { bankInfo = pullBankBalance(); } catch (e) { Logger.log('Saldo bank dilewati (cek scope glaccount_view): ' + e.message); }
   harvestSkuSales(invoices, today);
   const rk = computeRestock(invoices, today, onOrder, bankInfo);
-  writeRestockTab(rk);
+  // Tab 📦 Restock Engine dicabut 2026-10-15; hasilnya kini cuma tampil di 📦 Stok Barang (file ROSH AR).
+  const adeSS = _roleSS('ADE_SHEET_ID');
+  if (adeSS) {
+    TARGET_SS = adeSS;
+    try { writeStokAdminTab(rk); } finally { TARGET_SS = null; }
+  }
   try {
-    SpreadsheetApp.getUi().alert('Restock diperbarui — cek tab ' + CONFIG.TABS.RESTOCK +
-      '.\nKalau masih ada SKU "stok tak diketahui" atau line-item belum lengkap, jalankan lagi (harvest bertahap).');
+    SpreadsheetApp.getUi().alert('Stok diperbarui — cek tab ' + CONFIG.TABS.STOK + ' di file ROSH AR.' +
+      '\nKalau masih ada SKU "stok tak diketahui" atau line-item belum lengkap, jalankan lagi (harvest bertahap).');
   } catch (e) {}
 }
 

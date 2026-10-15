@@ -1159,13 +1159,8 @@ function refreshCustomerNow() {
 
   const masterSS = SpreadsheetApp.openById(CONFIG.SHEET_ID);
   const yCust = collectCustomerYellow([masterSS]);
-  const yTurun = (typeof collectTurunYellow === 'function') ? collectTurunYellow([masterSS]) : {};
   const rapor = buildCustomerReport(invoices, today, yCust);
   writeCustomerTab(rapor);
-  if (typeof writeTurunBukuTab === 'function') {
-    const health = computeBusinessHealth(invoices, { invoices: invoices }, today);
-    writeTurunBukuTab(buildTurunBuku(rapor, health, today, yTurun));
-  }
   // Dua tab turunan rapor di master. File Deden tetap menunggu sync penuh (butuh TARGET_SS swap).
   writeStopSupplyTab(buildStopSupply(invoices, today, rapor));
   writeCustomerStatusTab(buildCustomerStatus(rapor), 'master');

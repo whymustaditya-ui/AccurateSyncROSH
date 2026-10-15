@@ -123,18 +123,19 @@ function fullSync() {
     const masterSS = SpreadsheetApp.openById(CONFIG.SHEET_ID);
     const yA = collectPoolYellow([masterSS, adeSS], CONFIG.TABS.POOL_A);
     const yB = collectPoolYellow([masterSS, adeSS], CONFIG.TABS.POOL_B);
-    const yR = collectRouteYellow([masterSS, adeSS], CONFIG.TABS.RUTE); // Zona/Pin/Status/Tgl/Hasil
     const yCust  = collectCustomerYellow([masterSS]);  // Limit Disetujui / Catatan Nathan
     const yRekap = collectRekapYellow([adeSS]);        // 📝 Catatan di tab Rekap Corporate (file ROSH AR)
     const yArc   = collectArCustomerYellow([masterSS, adeSS]); // 🟡 per customer di tab Tagihan AR per Customer (Ade menang)
     const arCust = buildArCustomers(invoices, today);            // Pool A+B per customer (master + ROSH AR)
-    const yTurun = collectTurunYellow([masterSS]);     // Status gelombang cabut tempo
 
     // ── MASTER (owner) — every tab ──
     TARGET_SS = null;
-    const routePlan = buildRoutePlan(invoices, today, yR); // master context → _PinCache on master
     migrateTabNames();                       // rename old tabs in place (preserve Pool A/B 🟡 data)
     deleteDeprecatedTabs();                  // drop legacy 'Tagihan Ade'
+    // 2026-10-15 (partner): tab yang tidak dipakai dicabut. Hitungan di baliknya tetap jalan kalau
+    // masih dibutuhkan tab lain (computeRestock → 📦 Stok Barang, _glidePath → Ringkasan).
+    _dropTabs(_droppedTabs2610());
+    _dropTabsMatching(DROPPED_TAB_PATTERNS_2610);
     writeCaraBacaTab();                       // 📖 onboarding guide (static, rebuilt each sync)
     writeTodoTab(todo, 'master');             // 📌 To-Do Harian: siapa di-WA hari ini, pesan terisi
     // 📇 Kontak Customer (master-only) — directory semua customer (nama/WA/telp bisnis).
@@ -143,11 +144,9 @@ function fullSync() {
       try { harvestAllCustomerContacts(); } catch (e) { Logger.log('Harvest kontak dilewati: ' + e.message); }
       writeKontakTab();
     } catch (e) { Logger.log('Kontak Customer dilewati: ' + e.message); }
-    if (restock) writeRestockTab(restock);    // 📦 Restock Engine — saran pembelian per SKU (master-only)
     // 🧾 Tagihan AR per Customer menggantikan Pool A/B (2026-09-27: komisi Ade dihapus, jadi Pool
     // per faktur tidak lagi dibutuhkan). Gagal → Pool A/B ditulis seperti dulu.
     writeArCustomerOrPools(arCust, yArc, yA, yB, poolA, poolB);
-    writeRouteTab(routePlan, yR);             // 🗺️ Rute Penagihan
     writeInvoiceSalesTab(invoiceSales);
     writeInvoiceLainTab(invoiceLain, rekap, today);
     writeThpSalesTab(sales);
@@ -169,7 +168,7 @@ function fullSync() {
     const health = computeBusinessHealth(invoices, ctx, today);
     recordMetricSnapshot(health, today);
 
-    // 🧭 Rapor Customer + 📉 Turun Buku Piutang (master-only). Proyeksi murni: sisi bayar dari
+    // 🧭 Rapor Customer (master-only; 📉 Turun Buku dicabut 2026-10-15). Proyeksi murni: sisi bayar dari
     // inv.receipts (SEMUA faktur), margin dari _SkuSalesCache × _ItemCache (maks 6 bln, ikut prune
     // Restock), riwayat buku dari _MetricSnapshots yang baru saja distempel di atas. Nol call
     // Accurate, nol scope. FAIL-SOFT pola blok Restock/Kontak — tab saran tak boleh meng-abort sync.
@@ -187,13 +186,6 @@ function fullSync() {
       catch (e) {
         Logger.log('Tab Rapor Customer dilewati: ' + e.message);
         try { _log('WARN', 'Tab Rapor Customer dilewati: ' + e.message); } catch (e2) {}
-      }
-      try { writeTurunBukuTab(buildTurunBuku(rapor, health, today, yTurun)); }
-      catch (e) {
-        // Fail-soft TAPI jangan senyap: tab yang hilang tanpa jejak bikin orang mengira
-        // fiturnya tidak ada. Pesannya masuk ⚙️ Sync Log supaya kelihatan tanpa buka editor.
-        Logger.log('Turun Buku dilewati: ' + e.message);
-        try { _log('WARN', 'Turun Buku dilewati: ' + e.message); } catch (e2) {}
       }
     }
 
@@ -229,12 +221,13 @@ function fullSync() {
       migrateTabNames();                     // rename tab lama di file ini juga (KPI Matriks AR → KPI AR)
       // 2026-09-27 (Bro): Pool A + B DIGABUNG jadi 🧾 Tagihan AR per Customer, sama dengan master.
       _dropTabs(['📋 Ringkasan', 'Summary', CONFIG.TABS.THP_ADE, '📊 KPI Matriks AR', 'THP Ade']);
+      _dropTabs(_droppedTabs2610().concat(['🔔 Reminder Payment']));  // Reminder Payment → To-Do Harian penuh
+      _dropTabsMatching(DROPPED_TAB_PATTERNS_2610);
       writeArCustomerOrPools(arCust, yArc, yA, yB, poolA, poolB);
-      writeRouteTab(routePlan, yR);          // 🗺️ Rute Penagihan (daftar jalan penagihan)
-      // 🔔 Reminder Payment + 📦 Stok Barang untuk admin (partner 2026-10-15). Satu try per tab:
-      // gagal satu tidak boleh menelan yang lain atau meng-abort sync file ini.
-      try { writeTodoTab(todo, 'admin'); }
-      catch (e) { Logger.log('Reminder Payment (ROSH AR) dilewati: ' + e.message); }
+      // 📌 To-Do Harian (TAGIH + SAPA LAGI, isi sama dengan master) + 📦 Stok Barang untuk admin
+      // (partner 2026-10-15). Satu try per tab: gagal satu tidak menelan yang lain.
+      try { writeTodoTab(todo, 'master'); }
+      catch (e) { Logger.log('To-Do Harian (ROSH AR) dilewati: ' + e.message); }
       if (restock) {
         try { writeStokAdminTab(restock); }
         catch (e) { Logger.log('Stok Barang (ROSH AR) dilewati: ' + e.message); }
@@ -1416,6 +1409,21 @@ function _dropTabs(names) {
 function _renameRoleFile(ss, name) {
   try { if (ss && ss.getName() !== name) ss.rename(name); }
   catch (e) { Logger.log('Rename file role gagal: ' + e.message); }
+}
+
+// Tab yang dicabut 2026-10-15 (partner: tidak dipakai). CRM Leads Scraper bukan buatan script
+// ini, jadi dicocokkan lewat pola nama (emoji/kapitalisasi bisa beda).
+// Fungsi, bukan var: urutan muat file .gs tidak dijamin, CONFIG bisa belum ada saat var top-level dievaluasi.
+function _droppedTabs2610() { return [CONFIG.TABS.RUTE, CONFIG.TABS.RESTOCK, CONFIG.TABS.TURUN_BUKU]; }
+var DROPPED_TAB_PATTERNS_2610 = [/crm\s*leads?\s*scraper/i];
+
+function _dropTabsMatching(patterns) {
+  const ss = _ss();
+  ss.getSheets().forEach(function(sh) {
+    const n = sh.getName();
+    if (!(patterns || []).some(function(re) { return re.test(n); })) return;
+    try { ss.deleteSheet(sh); } catch (e) { Logger.log('Hapus tab "' + n + '" gagal: ' + e.message); }
+  });
 }
 
 function deleteDeprecatedTabs() {

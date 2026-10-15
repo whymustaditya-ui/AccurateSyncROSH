@@ -251,6 +251,16 @@ di tab Restock (jalur utama); kosongkan → auto total Kas&Bank (BCA+Jago) → d
 
 ---
 
+## Pencabutan tab 2026-10-15 (partner: tidak dipakai)
+
+`🗺️ Rute Penagihan` (master + ROSH AR), `📦 Restock Engine` (master), `📉 Turun Buku Piutang` (master) dan
+tab buatan luar `CRM Leads Scraper` (dicocokkan regex `DROPPED_TAB_PATTERNS_2610`) di-drop tiap sync lewat
+`_droppedTabs2610()` + `_dropTabsMatching`. **Hitungan yang masih dipakai tetap jalan:** `computeRestock`
+→ 📦 Stok Barang (ROSH AR; menu Refresh Stok Barang menulis ke sana), `_glidePath`/`CONFIG.TURUN_BUKU`
+→ Ringkasan. `buildRoutePlan`/`collectRouteYellow`/`collectTurunYellow`/`writeTurunBukuTab`/`writeRestockTab`
+tidak dipanggil lagi (file dibiarkan; 🟡 Zona/Pin Maps yang sempat diisi ikut hilang bersama tab).
+Bagian Rute/Restock/Turun Buku di bawah = arsip desain.
+
 ## Refine 2026-09-05 — tab, kolom, nama (prinsip yang dipegang)
 
 Pemangkasan besar setelah Panduan Sales v1.0 (tempo 14 hari). Prinsip yang dipakai untuk memutuskan
@@ -284,7 +294,7 @@ hidden tabs can be unhidden/copied). The KPI tabs expose take-home pay, so real 
 Sheet file per person**, fed by the same sync:
 
 - **Master `Tracker Invoice`** (owner = Roshan, never shared to staff) — all tabs.
-- **Ade file** (`ROSH AR`, shared **Editor**, sekarang dipegang admin tukar faktur) — **🔔 Reminder Payment** (`writeTodoTab(todo,'admin')`: seksi TAGIH H-3→H+14 dari To-Do, semua customer, tanpa SAPA LAGI) + **📦 Stok Barang** (`writeStokAdminTab`: stok, PO, demand/bln, target ½ demand, status, saran order CTN; **nol kolom rupiah**, harga beli tetap di master) (partner 2026-10-15) + 🧾 Tagihan AR per Customer (Pool A+B digabung per customer, sejak 2026-09-27; tab Pool A/B tidak lagi ada di file ini) + 🗺️ Rute Penagihan + 🏢 Rekap Tagihan Corporate (kolom 📝 Catatan bisa diisi). **2026-09-22 (Bro): 📋 Ringkasan & 📊 KPI AR (Ade) DICABUT dari file ini** (`_dropTabs` di blok Ade `fullSync`) — gaji/KPI cuma di master, file ini murni alat kerja penagihan; nama file + nama tab tidak lagi menyebut "Ade" (`_renameRoleFile`). Tab yang dibuat tangan / hasil Google Form (ℹ️ Info Tukar Faktur, 📋 Hasil Laporan) tidak ditulis script dan dipaksa ke ujung kanan oleh `_moveTrailingTabs`/`TRAILING_TAB_PATTERNS` (Style.gs) — Hasil Laporan paling kanan.
+- **Ade file** (`ROSH AR`, shared **Editor**, sekarang dipegang admin tukar faktur) — **📌 To-Do Harian** (`writeTodoTab(todo,'master')`, isi identik master: TAGIH + SAPA LAGI; sempat jadi 🔔 Reminder Payment TAGIH-saja, digabung lagi 2026-10-15 dan tab lamanya di-drop) + **📦 Stok Barang** (`writeStokAdminTab`: stok, PO, demand/bln, target ½ demand, status, saran order CTN; **nol kolom rupiah**, harga beli tetap di master) (partner 2026-10-15) + 🧾 Tagihan AR per Customer (Pool A+B digabung per customer, sejak 2026-09-27; tab Pool A/B tidak lagi ada di file ini) + 🗺️ Rute Penagihan + 🏢 Rekap Tagihan Corporate (kolom 📝 Catatan bisa diisi). **2026-09-22 (Bro): 📋 Ringkasan & 📊 KPI AR (Ade) DICABUT dari file ini** (`_dropTabs` di blok Ade `fullSync`) — gaji/KPI cuma di master, file ini murni alat kerja penagihan; nama file + nama tab tidak lagi menyebut "Ade" (`_renameRoleFile`). Tab yang dibuat tangan / hasil Google Form (ℹ️ Info Tukar Faktur, 📋 Hasil Laporan) tidak ditulis script dan dipaksa ke ujung kanan oleh `_moveTrailingTabs`/`TRAILING_TAB_PATTERNS` (Style.gs) — Hasil Laporan paling kanan.
 - **Deden file** (`ROSH Tagihan — Deden`, shared **Viewer**; Pool B pantau DICABUT 2026-09-27, lihat Status Customer) — Summary (Sales-scoped) + Tagihan Sales + **🚦 Status Customer (his customers, since 2026-09-05; replaced ⛔ Customer Ditahan)** + **📌 To-Do Kamu (tagih + sapa lagi, Kirim WA)** + **💰 Faktur Collected** + KPI Matriks Sales + **📈 Riwayat THP (section SALES saja)**.
 
 **💰 Faktur Collected di file Deden (2026-08-02):** semua tab lain di file-nya berorientasi tagihan yang

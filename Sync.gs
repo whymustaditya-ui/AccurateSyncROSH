@@ -231,6 +231,14 @@ function fullSync() {
       _dropTabs(['📋 Ringkasan', 'Summary', CONFIG.TABS.THP_ADE, '📊 KPI Matriks AR', 'THP Ade']);
       writeArCustomerOrPools(arCust, yArc, yA, yB, poolA, poolB);
       writeRouteTab(routePlan, yR);          // 🗺️ Rute Penagihan (daftar jalan penagihan)
+      // 🔔 Reminder Payment + 📦 Stok Barang untuk admin (partner 2026-10-15). Satu try per tab:
+      // gagal satu tidak boleh menelan yang lain atau meng-abort sync file ini.
+      try { writeTodoTab(todo, 'admin'); }
+      catch (e) { Logger.log('Reminder Payment (ROSH AR) dilewati: ' + e.message); }
+      if (restock) {
+        try { writeStokAdminTab(restock); }
+        catch (e) { Logger.log('Stok Barang (ROSH AR) dilewati: ' + e.message); }
+      }
       // 🏢 Rekap Tagihan Corporate — isi sama dengan seksi di master, plus kolom 📝 Catatan
       // yang boleh diisi tangan (upsert per nomor faktur). FAIL-SOFT: tab tambahan tak boleh
       // meng-abort sync file ini.

@@ -200,9 +200,10 @@ Tiga layer:
    6×; fix 2026-06-07). SKU baru dibagi hari sejak first-sale; fail-safe saat harvest belum lengkap. Safety
    stock **statistik**: `SS = SERVICE_Z[tier] × σ_LT`, `σ_LT = √(LT·σ_daily² + d²·σ_LTdays²)` (`LT_CV` 0.3),
    service level A~97.5%/B~95%/C~90%/D~85%. **σ di-bound `MIN_CV` 0.25–`MAX_CV` 1.25**. `ROP = d×LT + SS`;
-   lead time per item (`deliveryLeadTime`, fallback `LEAD_TIME` 14). **`S = ROP + d×CYCLE_DAYS[tier]`**
-   (LEAN A14/B10/C7/D5) **diplafon `MAX_COVER_DAYS`** (A35/B28/C21/D18 hari — posture tipis ~2–3 mgg, lead
-   time pendek). **Inventory position `IP = stok + on-order`**; IP ≤ ROP → 🔴 order `S−IP` · ≤ROP×1.2 → 🟡 · else 🟢.
+   lead time per item (`deliveryLeadTime`, fallback `LEAD_TIME` 14). **`S = TARGET_MONTH_FRAC (0.5) × d × 30`**
+   = ½ × demand/bln, semua tier (partner 2026-10-15; dulu `ROP + d×CYCLE_DAYS[tier]` diplafon `MAX_COVER_DAYS`,
+   keduanya dicabut). **Inventory position `IP = stok + on-order`**; IP < S → 🔴 order `S−IP` · S ≤ IP < ROP →
+   🟡 Rawan (lead time) · else 🟢. ROP tidak memicu order, cuma peringatan; jumlah 🟡 tampil di RINGKAS.
 3. **Cash cap** — `RaR%` = omzet SKU ÷ total. Rank 🔴 by **RaR ÷ harga beli**, alokasi budget top-down →
    `BELI #n` vs `TUNDA`. **Budget resolusi (2026-06-08, prioritas):** ① **cell `Budget restock (ketik →)` 🟡**
    di RINGKAS tab — user KETIK angka di sheet (`_readRestockBudget` baca cell sebelum tab ditulis ulang, pola
@@ -283,7 +284,7 @@ hidden tabs can be unhidden/copied). The KPI tabs expose take-home pay, so real 
 Sheet file per person**, fed by the same sync:
 
 - **Master `Tracker Invoice`** (owner = Roshan, never shared to staff) — all tabs.
-- **Ade file** (`ROSH AR`, shared **Editor**) — 🧾 Tagihan AR per Customer (Pool A+B digabung per customer, sejak 2026-09-27; tab Pool A/B tidak lagi ada di file ini) + 🗺️ Rute Penagihan + 🏢 Rekap Tagihan Corporate (kolom 📝 Catatan bisa diisi). **2026-09-22 (Bro): 📋 Ringkasan & 📊 KPI AR (Ade) DICABUT dari file ini** (`_dropTabs` di blok Ade `fullSync`) — gaji/KPI cuma di master, file ini murni alat kerja penagihan; nama file + nama tab tidak lagi menyebut "Ade" (`_renameRoleFile`). Tab yang dibuat tangan / hasil Google Form (ℹ️ Info Tukar Faktur, 📋 Hasil Laporan) tidak ditulis script dan dipaksa ke ujung kanan oleh `_moveTrailingTabs`/`TRAILING_TAB_PATTERNS` (Style.gs) — Hasil Laporan paling kanan.
+- **Ade file** (`ROSH AR`, shared **Editor**, sekarang dipegang admin tukar faktur) — **🔔 Reminder Payment** (`writeTodoTab(todo,'admin')`: seksi TAGIH H-3→H+14 dari To-Do, semua customer, tanpa SAPA LAGI) + **📦 Stok Barang** (`writeStokAdminTab`: stok, PO, demand/bln, target ½ demand, status, saran order CTN; **nol kolom rupiah**, harga beli tetap di master) (partner 2026-10-15) + 🧾 Tagihan AR per Customer (Pool A+B digabung per customer, sejak 2026-09-27; tab Pool A/B tidak lagi ada di file ini) + 🗺️ Rute Penagihan + 🏢 Rekap Tagihan Corporate (kolom 📝 Catatan bisa diisi). **2026-09-22 (Bro): 📋 Ringkasan & 📊 KPI AR (Ade) DICABUT dari file ini** (`_dropTabs` di blok Ade `fullSync`) — gaji/KPI cuma di master, file ini murni alat kerja penagihan; nama file + nama tab tidak lagi menyebut "Ade" (`_renameRoleFile`). Tab yang dibuat tangan / hasil Google Form (ℹ️ Info Tukar Faktur, 📋 Hasil Laporan) tidak ditulis script dan dipaksa ke ujung kanan oleh `_moveTrailingTabs`/`TRAILING_TAB_PATTERNS` (Style.gs) — Hasil Laporan paling kanan.
 - **Deden file** (`ROSH Tagihan — Deden`, shared **Viewer**; Pool B pantau DICABUT 2026-09-27, lihat Status Customer) — Summary (Sales-scoped) + Tagihan Sales + **🚦 Status Customer (his customers, since 2026-09-05; replaced ⛔ Customer Ditahan)** + **📌 To-Do Kamu (tagih + sapa lagi, Kirim WA)** + **💰 Faktur Collected** + KPI Matriks Sales + **📈 Riwayat THP (section SALES saja)**.
 
 **💰 Faktur Collected di file Deden (2026-08-02):** semua tab lain di file-nya berorientasi tagihan yang

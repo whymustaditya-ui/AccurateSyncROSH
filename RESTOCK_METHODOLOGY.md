@@ -86,11 +86,15 @@ demand-nya stabil dapat buffer tipis. Tidak ada lagi "safety days" yang asal puk
 
 ```
 ROP = d × leadTime + SS                 ← stok di titik ini = saatnya order
-S   = ROP + d × cycle[tier]             ← order sampai level ini (cycle LEAN: A14/B10/C7/D5 hari)
-S   = min(S, MAX_COVER_DAYS[tier] × d)  ← PLAFON keras (A35/B28/C21/D18 hari) — posture tipis ~2–3 mgg
+S   = TARGET_MONTH_FRAC × d × 30        ← target stok = ½ × demand/bulan (~15 hari), semua tier
 ```
 
-> **Posture (2026-06-07):** karena lead time cuma 1–2 minggu, target dibikin **tipis** (cycle pendek +
+> **Sejak 2026-10-15 (partner):** target stok diganti jadi **½ × demand per bulan** (`TARGET_MONTH_FRAC`
+> 0.5), menggantikan `S = ROP + d×cycle[tier]` diplafon `MAX_COVER_DAYS`. Lebih sederhana dan bisa dicek
+> admin dengan mata. ROP tidak lagi memicu order; dipakai untuk status 🟡 Rawan (target lebih tipis dari
+> kebutuhan selama lead time). `CYCLE_DAYS`/`MAX_COVER_DAYS` di bawah ini sudah dicabut dari CONFIG.
+>
+> **Posture lama (2026-06-07):** karena lead time cuma 1–2 minggu, target dibikin **tipis** (cycle pendek +
 > plafon ~3–5 minggu peak, rata-rata ~2–3 minggu stok). Hemat cash & sering order kecil; safety stock
 > (Z×σ) tetap jaga saat pabrik ngadat. Tunable di `CYCLE_DAYS` / `MAX_COVER_DAYS`.
 
@@ -106,9 +110,9 @@ Keputusan:
 
 | Kondisi | Status | Aksi |
 |---|---|---|
-| IP ≤ ROP | 🔴 Order Sekarang | order `S − IP` CTN |
-| IP ≤ ROP × 1,2 | 🟡 Mendekati | siap-siap |
-| IP > ROP × 1,2 | 🟢 Aman | diam |
+| IP < S | 🔴 Order Sekarang | order `S − IP` CTN |
+| S ≤ IP < ROP | 🟡 Rawan (lead time) | target terpenuhi tapi bisa kosong sebelum PO datang, owner putuskan |
+| IP ≥ max(S, ROP) | 🟢 Aman | diam |
 
 Karena pakai **IP (sudah termasuk barang yang lagi di-PO)**, SKU yang sudah dipesan tidak akan disuruh
 beli lagi.

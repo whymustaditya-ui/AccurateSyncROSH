@@ -13,8 +13,9 @@
  * Menggantikan dua tab (2026-09-05): ✉️ Pesan Penagihan dan 📞 Reaktivasi Customer. Semua teks
  * customer-facing tetap di Pesan.gs (_penagihanMessageBatch, _sapaMessage) supaya satu tempat.
  *
- * Ditulis di master (semua customer, kolom Sales) dan file Deden (input di-scope _bySalesman,
- * alias tab 📌 To-Do Kamu, tanpa kolom Sales). Proyeksi murni: nol call Accurate, nol scope.
+ * Ditulis di master (semua customer, kolom Sales), file Deden (input di-scope _bySalesman,
+ * alias tab 📌 To-Do Kamu, tanpa kolom Sales), dan file ROSH AR untuk admin (role 'admin':
+ * tab 🔔 Reminder Payment, seksi TAGIH saja, semua customer; SAPA LAGI urusan jualan, bukan admin). Proyeksi murni: nol call Accurate, nol scope.
  * Depends: Pesan.gs, Sync.gs (buildFollowUpReminders, fmtDate), Style.gs, Kpi.gs (rupiah),
  * Restock.gs (_mblock).
  */
@@ -65,10 +66,12 @@ function buildTodo(invoices, today) {
 // WRITER — tab 📌 To-Do Harian. Semua 🔴 generated, tidak ada kolom isian.
 // ─────────────────────────────────────────────────────────────────────────────
 function writeTodoTab(todo, role) {
-  const sh = uiSheet(CONFIG.TABS.TODO);
+  const isDeden = (role === 'deden');
+  const isAdmin = (role === 'admin');
+  const sh = uiSheet(isAdmin ? CONFIG.TABS.REMINDER : CONFIG.TABS.TODO);
   sh.setFrozenColumns(0);
   sh.setFrozenRows(0);
-  const isDeden = (role === 'deden');
+  if (isAdmin) todo = { tagih: todo.tagih, sapa: [], sapaTotal: 0 };
   const H1 = _todoHeaders('tagih', role), H2 = _todoHeaders('sapa', role);
   const SPAN = H1.length;
   const col = function(H) { const m = {}; H.forEach(function(h, i) { m[h] = i + 1; }); return m; };
@@ -86,7 +89,12 @@ function writeTodoTab(todo, role) {
   const siap = tagihRows.concat(sapaRows).filter(function(x) { return !!x.phone; }).length;
   const totTagih = todo.tagih.reduce(function(s, c) { return s + c.totalOutstanding; }, 0);
 
-  let r = uiBanner(sh, 1, SPAN,
+  let r = isAdmin ? uiBanner(sh, 1, SPAN, '🔔 Reminder Payment — siapa yang diingatkan bayar hari ini',
+    'Faktur di window H' + CONFIG.PENAGIHAN_WINDOW_MIN + ' sampai H+' + CONFIG.PENAGIHAN_WINDOW_MAX +
+    ', satu pesan per customer. Lewat H+' + CONFIG.PENAGIHAN_WINDOW_MAX + ' pindah ke 🧾 Tagihan AR per Customer. ' +
+    'Tap 📲 Kirim WA, WhatsApp terbuka dengan pesan terisi, tinggal Send. Dibuat ulang tiap jam 5 pagi.',
+    UI.INK, UI.BAND)
+  : uiBanner(sh, 1, SPAN,
     isDeden ? '📌 To-Do Kamu — siapa yang di-WA hari ini' : '📌 To-Do Harian — siapa yang di-WA hari ini',
     (isDeden ? 'Customer atas nama kamu. ' : '') +
     'Dua daftar: TAGIH (faktur di window H' + CONFIG.PENAGIHAN_WINDOW_MIN + ' sampai H+' + CONFIG.PENAGIHAN_WINDOW_MAX +
@@ -101,6 +109,7 @@ function writeTodoTab(todo, role) {
     ['📞 Sapa lagi', todo.sapa.length + (todo.sapaTotal > todo.sapa.length ? ' dari ' + todo.sapaTotal : '') + ' customer'],
     ['📲 Siap kirim', siap + ' pesan']
   ];
+  if (isAdmin) strip.splice(1, 1);
   const w = Math.floor(SPAN / strip.length);
   strip.forEach(function(kv, i) {
     const c1 = i * w + 1, c2 = (i === strip.length - 1) ? SPAN : c1 + w - 1;
@@ -167,39 +176,45 @@ function writeTodoTab(todo, role) {
     r += 2;
   }
 
-  // ── 📞 SAPA LAGI ──
-  r = uiSection(sh, r, SPAN, '📞 SAPA LAGI  ·  lama tidak order  ·  ' + todo.sapa.length +
-    (todo.sapaTotal > todo.sapa.length ? ' dari ' + todo.sapaTotal : '') + ' customer', UI.BLUE);
-  if (!sapaRows.length) {
-    sh.getRange(r, 1, 1, SPAN).merge().setValue('✅ Semua customer order dalam 7 hari terakhir, atau sedang ditagih.')
-      .setFontColor(UI.NOTE).setFontStyle('italic').setVerticalAlignment('middle');
-    r += 2;
-  } else {
-    uiHeaderRow(sh, r, H2); r++;
-    const first = r, n = sapaRows.length;
-    const m = sapaRows.map(function(x) {
-      const c = x.c;
-      const row = [c.customer, fmtDate(c.lastTransDate), c.daysSince, c.bucket, x.phone, c.tierText || '',
-                   _waLinkFormula(x.phone, x.msg), x.msg];
-      if (!isDeden) row.splice(1, 0, c.salesman || '(POS / online)');
-      return row;
-    });
-    sh.getRange(first, 1, n, SPAN).setValues(m);
-    styleRows(first, n, C2);
-    sh.getRange(first, C2['Order Terakhir'], n, 1).setHorizontalAlignment('center');
-    sh.getRange(first, C2['Hari Diam'], n, 1).setHorizontalAlignment('center');
-    sh.getRange(first, C2['Bucket'], n, 1).setHorizontalAlignment('center');
-    const days = sh.getRange(first, C2['Hari Diam'], n, 1);
-    rules.push(R().whenNumberGreaterThanOrEqualTo(90).setBackground(UI.T_RED).setRanges([days]).build());
-    rules.push(R().whenNumberBetween(30, 89).setBackground('#fed7aa').setRanges([days]).build());
-    rules.push(R().whenNumberBetween(7, 29).setBackground(UI.T_AMBER).setRanges([days]).build());
-    r += n + 1;
+  // ── 📞 SAPA LAGI ── (tidak ada di file admin)
+  if (!isAdmin) {
+    r = uiSection(sh, r, SPAN, '📞 SAPA LAGI  ·  lama tidak order  ·  ' + todo.sapa.length +
+      (todo.sapaTotal > todo.sapa.length ? ' dari ' + todo.sapaTotal : '') + ' customer', UI.BLUE);
+    if (!sapaRows.length) {
+      sh.getRange(r, 1, 1, SPAN).merge().setValue('✅ Semua customer order dalam 7 hari terakhir, atau sedang ditagih.')
+        .setFontColor(UI.NOTE).setFontStyle('italic').setVerticalAlignment('middle');
+      r += 2;
+    } else {
+      uiHeaderRow(sh, r, H2); r++;
+      const first = r, n = sapaRows.length;
+      const m = sapaRows.map(function(x) {
+        const c = x.c;
+        const row = [c.customer, fmtDate(c.lastTransDate), c.daysSince, c.bucket, x.phone, c.tierText || '',
+                     _waLinkFormula(x.phone, x.msg), x.msg];
+        if (!isDeden) row.splice(1, 0, c.salesman || '(POS / online)');
+        return row;
+      });
+      sh.getRange(first, 1, n, SPAN).setValues(m);
+      styleRows(first, n, C2);
+      sh.getRange(first, C2['Order Terakhir'], n, 1).setHorizontalAlignment('center');
+      sh.getRange(first, C2['Hari Diam'], n, 1).setHorizontalAlignment('center');
+      sh.getRange(first, C2['Bucket'], n, 1).setHorizontalAlignment('center');
+      const days = sh.getRange(first, C2['Hari Diam'], n, 1);
+      rules.push(R().whenNumberGreaterThanOrEqualTo(90).setBackground(UI.T_RED).setRanges([days]).build());
+      rules.push(R().whenNumberBetween(30, 89).setBackground('#fed7aa').setRanges([days]).build());
+      rules.push(R().whenNumberBetween(7, 29).setBackground(UI.T_AMBER).setRanges([days]).build());
+      r += n + 1;
+    }
   }
 
   // Sekali untuk semua blok: setConditionalFormatRules mengganti SELURUH aturan sheet.
   if (rules.length) sh.setConditionalFormatRules(rules);
 
-  uiFootnote(sh, r, SPAN,
+  if (isAdmin) uiFootnote(sh, r, SPAN,
+    '◆ Satu baris per customer, semua fakturnya di window digabung dalam satu pesan. Reminder ikut jadwal SOP: ' +
+    'H-3 dan H0 pengingat, H+3 tindak lanjut, H+7 isyarat halus order berikutnya menunggu pelunasan, H+14 terakhir. ' +
+    'Baris tanpa No. Telp (POS/online) tidak punya link Kirim WA. Klik sel Pesan untuk melihat teks utuh di formula bar.');
+  else uiFootnote(sh, r, SPAN,
     '◆ TAGIH: satu baris per customer, semua fakturnya di window digabung dalam satu pesan; Reminder ikut jadwal SOP ' +
     '(H-3 dan H0 pengingat, H+3 tindak lanjut, H+7 isyarat halus order berikutnya menunggu pelunasan, H+14 terakhir sebelum handover). ' +
     'SAPA LAGI: customer yang sedang ditagih atau punya faktur lewat jatuh tempo TIDAK ada di sini, selesaikan tagihannya dulu; ' +

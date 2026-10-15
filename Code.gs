@@ -183,8 +183,10 @@ const CONFIG = {
     PENETRATION_BANDS: [[30, 5], [20, 4], [10, 3], [5, 2], [0, 1]],      // (karton/bln · customer/window)
     TIER_CUTOFFS:  { A: 4.5, B: 3.5, C: 2.5 },                  // skor → tier (else D)
     SERVICE_Z:     { A: 1.96, B: 1.65, C: 1.28, D: 1.04 },      // service level z: A~97.5% … D~85%
-    CYCLE_DAYS:    { A: 14, B: 10, C: 7,  D: 5  },              // cycle stock di ATAS reorder point (LEAN ~2-3 mgg)
-    MAX_COVER_DAYS:{ A: 35, B: 28, C: 21, D: 18 },             // PLAFON keras target stok (hari) — posture tipis (lead time 1-2 mgg)
+    // Target stok = TARGET_MONTH_FRAC × demand per bulan, sama untuk semua tier (partner, 2026-10-15).
+    // Menggantikan ROP + d×CYCLE_DAYS[tier] diplafon MAX_COVER_DAYS. ROP tetap dihitung, cuma
+    // untuk menandai 🟡 SKU yang targetnya lebih tipis dari kebutuhan selama lead time.
+    TARGET_MONTH_FRAC: 0.5,
     PO_BUDGET_PROP: 'PO_BUDGET',  // Script Property (Rp). Override programatik; di bawah cell ketik-di-sheet.
     // Resolusi budget restock (prioritas atas→bawah): ① cell "Budget restock (ketik →)" 🟡 di tab Restock
     // (user ketik di sheet) → ② Script Property PO_BUDGET → ③ auto total saldo Kas & Bank (akun CASH_BANK
@@ -346,6 +348,8 @@ const CONFIG = {
   TABS: {
     CARA_BACA:     '📖 Cara Baca',          // onboarding guide (static, rebuilt each sync)
     TODO:          '📌 To-Do Harian',        // daftar kerja harian: TAGIH (pesan penagihan) + SAPA LAGI (reaktivasi), Kirim WA (Todo.gs; master + file Deden)
+    REMINDER:      '🔔 Reminder Payment',    // seksi TAGIH dari To-Do, untuk admin (Todo.gs role 'admin'; file ROSH AR saja)
+    STOK:          '📦 Stok Barang',         // stok vs target ½ demand/bln, tanpa harga (Restock.gs writeStokAdminTab; file ROSH AR saja)
     STOP_SUPPLY:   '⛔ Stop Supply',          // customer lewat jatuh tempo / lewat limit → Nathan tahan SO baru (StopSupply.gs, master-only)
     STATUS_CUST:   '🚦 Status Customer',       // gate harian sales: Boleh Supply? + Sisa Limit per customer (Status.gs; master + file Deden discoped)
     KONTAK:        '📇 Kontak Customer',      // directory semua customer: nama + No WA + No Bisnis (Kontak.gs, master-only)

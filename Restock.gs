@@ -10,11 +10,13 @@
  *   2. KAPAN & BERAPA      — demand RECENCY-weighted (EWMA mingguan) + normalisasi SKU baru.
  *                            Reorder point statistik: ROP = d×LT + Z[tier]×σ_LT (safety stock
  *                            ngikut volatilitas demand & lead time — anti supply acak).
- *                            Order-up-to S = ROP + d×cycle(tier). Inventory position = stok + on-order.
+ *                            Order-up-to S = ½ × demand/bulan (partner 2026-10-15; ROP cuma
+ *                            menandai 🟡 Rawan). Inventory position = stok + on-order.
  *   3. CASH CAP            — rank SKU yang perlu order by Revenue-at-Risk ÷ biaya,
  *                            alokasi PO_BUDGET top-down → BELI SEKARANG vs TUNDA
  *
- * MASTER-ONLY (seperti Pesan/StopSupply/Health) — ditulis di blok master fullSync saja.
+ * Tab 📦 Restock Engine MASTER-ONLY. File ROSH AR (admin) dapat versi ringkas tanpa harga:
+ * `writeStokAdminTab` → 📦 Stok Barang (stok, target, saran order; nol kolom rupiah).
  *
  * Data acquisition:
  *   • `_ItemCache`     — item/list.do paged (scope `item_view`): stok (availableToSell) + cost
@@ -600,12 +602,9 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
     const z = (R.SERVICE_Z[tier] != null) ? R.SERVICE_Z[tier] : 1.28;
     const SS = z * sigmaLT;
     const ROP = Math.round(d * leadTime + SS);
-    // order-up-to = ROP + cycle stock, TAPI diplafon MAX_COVER_DAYS hari-stok (anti over-order
-    // dari σ lumpy) — tetap dijaga ≥ ROP supaya order minimal menutup titik reorder.
-    let S = Math.round(ROP + d * R.CYCLE_DAYS[tier]);
-    if (R.MAX_COVER_DAYS && R.MAX_COVER_DAYS[tier]) {
-      S = Math.min(S, Math.max(ROP, Math.round(d * R.MAX_COVER_DAYS[tier])));
-    }
+    // Target stok (order-up-to) = ½ × demand per bulan (partner 2026-10-15), basis sama dengan
+    // kolom Demand/bln (d × 30). ROP tidak lagi memicu order, cuma dipakai untuk status 🟡.
+    const S = Math.round((R.TARGET_MONTH_FRAC || 0.5) * d * 30);
 
     const ip = (onHand == null) ? null : onHand + onOrd;     // inventory position
     const coverNow = (ip != null && d > 0) ? Math.round(ip / d) : null;
@@ -618,7 +617,7 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
     else {
       orderQty = Math.max(0, Math.ceil(S - ip));
       if (orderQty >= 1)           status = '🔴 Order Sekarang';
-      else if (ip <= ROP * 1.2)    status = '🟡 Mendekati';
+      else if (ip < ROP)           status = '🟡 Rawan (lead time)';   // target terpenuhi, tapi < kebutuhan selama nunggu kirim
       else                         status = '🟢 Aman';
     }
 
@@ -678,7 +677,7 @@ function computeRestock(invoices, today, onOrderMap, bankInfo) {
   });
 
   // 6) display sort: status (perlu aksi dulu) → RaR desc
-  const sp = { '🔴 Order Sekarang': 0, '🟡 Mendekati': 1, '🟢 Aman': 2, '⚪ Stok tak diketahui': 3, '⚪ Tanpa demand': 4 };
+  const sp = { '🔴 Order Sekarang': 0, '🟡 Rawan (lead time)': 1, '🟢 Aman': 2, '⚪ Stok tak diketahui': 3, '⚪ Tanpa demand': 4 };
   rows.sort(function(a, b) {
     const da = sp[a.status] != null ? sp[a.status] : 9;
     const db = sp[b.status] != null ? sp[b.status] : 9;
@@ -748,6 +747,8 @@ function writeRestockTab(restock) {
 
   writeRow('Data line-item (harvest)', dataStatus);
   writeRow('SKU perlu order', String(t.needCount || 0));
+  const rawan = ((restock && restock.rows) || []).filter(function(x) { return /^🟡/.test(x.status); }).length;
+  if (rawan) writeRow('SKU 🟡 rawan (target < lead time)', rawan + ' SKU: stok di atas target tapi bisa kosong sebelum PO datang');
   writeRow('Total saran belanja', rupiah(t.recommendSpend || 0));
 
   // Budget restock — CELL EDITABLE 🟡 (user ketik), info saldo Kas&Bank di sampingnya.
@@ -887,9 +888,9 @@ function writeRestockTab(restock) {
     'Reorder Point = demand×leadTime + safety; safety = Z[tier]×σ ' +
     '(service level A~97.5%/B~95%/C~90%/D~85%, σ ikut volatilitas demand + variasi lead time ' + Math.round((R.LT_CV || 0) * 100) + '%). ' +
     'Lead time per item dari Accurate (deliveryLeadTime), fallback ' + R.LEAD_TIME + ' hari. ' +
-    'Target Stok = Reorder Point + demand × cycle/tier (A ' + R.CYCLE_DAYS.A + '/B ' + R.CYCLE_DAYS.B + '/C ' + R.CYCLE_DAYS.C + '/D ' + R.CYCLE_DAYS.D + ' hari), ' +
-    'diplafon MAX_COVER (A ' + R.MAX_COVER_DAYS.A + '/B ' + R.MAX_COVER_DAYS.B + '/C ' + R.MAX_COVER_DAYS.C + '/D ' + R.MAX_COVER_DAYS.D + ' hari) + σ di-cap CV ' + R.MAX_CV + ' → anti over-order demand lumpy. ' +
-    'Posisi = Stok (availableToSell) + On Order (PO jalan). Posisi ≤ Reorder Point → 🔴 order (Target − Posisi). ' +
+    'Target Stok = ' + (R.TARGET_MONTH_FRAC || 0.5) + ' × Demand/bln (semua tier). ' +
+    'Posisi = Stok (availableToSell) + On Order (PO jalan). Posisi < Target → 🔴 order (Target − Posisi). ' +
+    'Posisi ≥ Target tapi < Reorder Pt → 🟡 Rawan: stok bisa habis sebelum PO berikutnya datang. ' +
     'Tier ' + bandLabel + '. Satuan CTN. Prioritas Beli = Revenue-at-Risk ÷ harga beli; set "' + R.PO_BUDGET_PROP + '" (Rp) untuk cap modal.');
   r += 1;
 
@@ -911,9 +912,9 @@ function writeRestockTab(restock) {
     ['On Order', 'Barang yang sudah di-PO ke supplier tapi BELUM datang.'],
     ['Posisi', 'Stok + On Order = yang benar-benar kamu pegang/akan pegang. Dipakai buat keputusan, biar nggak dobel order.'],
     ['Hari Cover', 'Posisi sekarang cukup buat berapa HARI lagi sebelum habis.'],
-    ['Target Stok', 'Idealnya distok sampai segini (CTN) — sudah hitung lama nunggu kirim + pengaman.'],
-    ['Reorder Pt', 'Batas bawah. Kalau Posisi ≤ angka ini → wajib order sekarang.'],
-    ['Status', '🔴 Order Sekarang (Posisi sudah ≤ Reorder Pt) · 🟡 Mendekati (siap-siap) · 🟢 Aman.'],
+    ['Target Stok', 'Stok yang dijaga = setengah dari Demand/bln (kira-kira cukup 15 hari jualan).'],
+    ['Reorder Pt', 'Kebutuhan selama nunggu barang datang (lead time + pengaman). Cuma peringatan, tidak memicu order.'],
+    ['Status', '🔴 Order Sekarang (Posisi di bawah Target) · 🟡 Rawan (sudah di atas Target, tapi di bawah Reorder Pt: bisa kosong sebelum PO datang) · 🟢 Aman.'],
     ['Saran Order', 'Jumlah CTN yang disarankan dibeli sekarang (= Target − Posisi).'],
     ['Est. Biaya', 'Perkiraan biaya order itu = Saran Order × harga beli.'],
     ['RaR % (Revenue at Risk)', 'Kontribusi SKU ini ke total omzet. Makin besar % → makin besar omzet yang HILANG kalau dia kosong → makin diprioritaskan saat modal terbatas.'],
@@ -936,6 +937,92 @@ function writeRestockTab(restock) {
   sh.setColumnWidth(16, 64); sh.setColumnWidth(17, 115);
   sh.setColumnWidth(18, 64); sh.setColumnWidth(19, 115);
   sh.setFrozenRows(2);   // pin banner saja (RINGKAS + 🛒 cart sekarang di atas DAFTAR SKU)
+  return sh;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WRITE — tab 📦 Stok Barang (file ROSH AR / admin). Proyeksi ringkas dari computeRestock:
+// stok, target, saran order dalam CTN. SENGAJA tanpa kolom rupiah (harga beli, biaya, RaR,
+// budget, prioritas beli) supaya data modal & margin tetap di master (Bro, 2026-10-15).
+// Nol call Accurate: restock sudah dihitung sekali di fullSync.
+// ─────────────────────────────────────────────────────────────────────────────
+function writeStokAdminTab(restock) {
+  const R = CONFIG.RESTOCK;
+  const sh = uiSheet(CONFIG.TABS.STOK);
+  sh.setFrozenColumns(0);
+  sh.setFrozenRows(0);
+  const headers = ['SKU', 'Nama Barang', 'Tier', 'Stok Tersedia', 'Sudah di-PO', 'Demand/bln',
+                   'Target Stok', 'Hari Cover', 'Status', 'Saran Order (CTN)'];
+  const SPAN = headers.length;
+  const rows = (restock && restock.rows) || [];
+  const frac = R.TARGET_MONTH_FRAC || 0.5;
+  const cnt = function(re) { return rows.filter(function(x) { return re.test(x.status); }).length; };
+
+  let r = uiBanner(sh, 1, SPAN, '📦 Stok Barang — stok tersedia vs target',
+    'Target Stok = ' + String(frac).replace('.', ',') + ' × Demand/bln (sekitar ' + Math.round(frac * 30) + ' hari jualan). ' +
+    'Satuan CTN. Dibuat ulang tiap jam 5 pagi · update ' + Utilities.formatDate(new Date(), 'GMT+7', 'dd/MM/yyyy HH:mm'),
+    UI.INK, UI.BAND);
+
+  const strip = [['🔴 Order', cnt(/^🔴/) + ' SKU'], ['🟡 Rawan', cnt(/^🟡/) + ' SKU'], ['🟢 Aman', cnt(/^🟢/) + ' SKU']];
+  const w = Math.floor(SPAN / strip.length);
+  strip.forEach(function(kv, i) {
+    const c1 = i * w + 1, c2 = (i === strip.length - 1) ? SPAN : c1 + w - 1;
+    _mblock(sh, r, c1, c2, kv[0] + '   ' + kv[1])
+      .setBackground(UI.BAND).setFontWeight('bold').setHorizontalAlignment('center')
+      .setBorder(true, true, true, true, false, false, UI.BORDER, SpreadsheetApp.BorderStyle.SOLID);
+  });
+  sh.setRowHeight(r, 30); r++;
+  sh.setRowHeight(r, 8); r++;
+
+  uiHeaderRow(sh, r, headers);
+  const hdrRow = r; r++;
+  if (!rows.length) {
+    sh.getRange(r, 1, 1, SPAN).merge()
+      .setValue('Data stok belum tersedia. Akan terisi setelah sync berikutnya berhasil menarik item master.')
+      .setFontColor(UI.NOTE).setFontStyle('italic');
+    r += 2;
+  } else {
+    const matrix = rows.map(function(x) {
+      return [
+        x.no, x.name, x.tier,
+        (x.onHand == null ? '—' : Math.round(x.onHand)),
+        (x.onOrder > 0 ? Math.round(x.onOrder) : ''),
+        Math.round(x.d * 30), x.S,
+        (x.coverNow == null ? '—' : x.coverNow),
+        x.status,
+        (x.orderQty > 0 ? x.orderQty : '')
+      ];
+    });
+    const first = r, n = matrix.length;
+    sh.getRange(first, 1, n, SPAN).setValues(matrix).setVerticalAlignment('middle')
+      .setBorder(true, true, true, true, true, true, UI.BORDER, SpreadsheetApp.BorderStyle.SOLID);
+    sh.getRange(first, 4, n, 5).setNumberFormat('#,##0').setHorizontalAlignment('right');
+    sh.getRange(first, 10, n, 1).setNumberFormat('#,##0').setHorizontalAlignment('right').setFontWeight('bold');
+    sh.getRange(first, 3, n, 1).setHorizontalAlignment('center').setFontWeight('bold');
+
+    const C = SpreadsheetApp.newConditionalFormatRule;
+    const tier = sh.getRange(first, 3, n, 1), st = sh.getRange(first, 9, n, 1);
+    sh.setConditionalFormatRules([
+      C().whenTextStartsWith('A').setBackground(UI.T_GREEN).setRanges([tier]).build(),
+      C().whenTextStartsWith('B').setBackground(UI.BLUE_SOFT).setRanges([tier]).build(),
+      C().whenTextStartsWith('C').setBackground(UI.T_AMBER).setRanges([tier]).build(),
+      C().whenTextStartsWith('D').setBackground(UI.T_GREY).setRanges([tier]).build(),
+      C().whenTextStartsWith('🔴').setBackground(UI.T_RED).setRanges([st]).build(),
+      C().whenTextStartsWith('🟡').setBackground(UI.T_AMBER).setRanges([st]).build(),
+      C().whenTextStartsWith('🟢').setBackground(UI.T_GREEN).setRanges([st]).build()
+    ]);
+    r = first + n + 1;
+  }
+
+  r = uiFootnote(sh, r, SPAN,
+    '◆ Stok Tersedia = stok di Accurate. Sudah di-PO = sudah dipesan ke supplier tapi belum datang. ' +
+    'Demand/bln = jualan rutin per bulan (lonjakan pesanan sekali-beli dibuang). ' +
+    'Status: 🔴 Order = stok + PO di bawah Target, pesan sebanyak Saran Order · ' +
+    '🟡 Rawan = sudah di atas Target, tapi bisa habis sebelum barang dari supplier datang, kabari owner · 🟢 Aman. ' +
+    'Hari Cover = stok + PO cukup untuk berapa hari jualan.');
+
+  [90, 260, 48, 100, 100, 95, 95, 85, 160, 120].forEach(function(px, i) { sh.setColumnWidth(i + 1, px); });
+  sh.setFrozenRows(hdrRow);
   return sh;
 }
 

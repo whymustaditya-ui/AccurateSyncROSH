@@ -25,7 +25,7 @@ var ARC_HEADERS = [
   'Customer', 'Status', 'Pool', 'Jml Faktur', 'Daftar Faktur', 'Total Outstanding', 'Umur Tertua (hr lewat JT)',
   'No. Telp', '📲 Kirim WA',
   'Channel', 'Hasil Negosiasi', 'Tgl Follow-up', 'Catatan',
-  'Alamat Customer', 'Loyalitas (4bln)', 'Pesan'
+  'Alamat Customer', 'Loyalitas (4bln)'
 ];
 var ARC_YELLOW = ['Channel', 'Hasil Negosiasi', 'Tgl Follow-up', 'Catatan'];
 var ARC_HROW = 3;   // banner = 1, subtitle = 2
@@ -169,38 +169,39 @@ function writeArCustomerTab(data, yellow, yPool) {
       const y = yellow.hasOwnProperty(c.customer) ? yellow[c.customer] : (_arcSeed(c, yPool) || ['', '', '', '']);
       return [
         c.customer, c.status, c.pool, c.invoices.length,
-        c.invoices.map(function(iv) { return iv.number; }).join('\n'),
+        c.invoices.map(function(iv) { return iv.number; }).join(', '),
         c.totalOutstanding, c.maxDaysPastDue, c.noTlp || '', _waLinkFormula(phone, msg),
         y[0], y[1], y[2], y[3],
-        c.alamat, c.tierText || '', msg
+        c.alamat, c.tierText || ''
       ];
     });
     const body = sh.getRange(ARC_DROW, 1, n, SPAN);
     body.setValues(matrix);
-    body.setVerticalAlignment('top')
+    body.setVerticalAlignment('middle').setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP)
       .setBorder(true, true, true, true, true, true, UI.BORDER, SpreadsheetApp.BorderStyle.SOLID);
 
     // Daftar Faktur: tiap nomor jadi link ke PDF kalau sudah ada di Drive.
     const rich = rows.map(function(c) {
-      const text = c.invoices.map(function(iv) { return iv.number; }).join('\n');
+      const text = c.invoices.map(function(iv) { return iv.number; }).join(', ');
       const b = SpreadsheetApp.newRichTextValue().setText(text);
       let pos = 0;
       c.invoices.forEach(function(iv) {
         const fid = _fakturFileId(iv.number);
         if (fid) b.setLinkUrl(pos, pos + iv.number.length, 'https://drive.google.com/file/d/' + fid + '/view');
-        pos += iv.number.length + 1;
+        pos += iv.number.length + 2;
       });
       return [b.build()];
     });
-    sh.getRange(ARC_DROW, C('Daftar Faktur'), n, 1).setRichTextValues(rich).setWrap(true);
+    sh.getRange(ARC_DROW, C('Daftar Faktur'), n, 1).setRichTextValues(rich);
 
     sh.getRange(ARC_DROW, C('Total Outstanding'), n, 1).setNumberFormat('"Rp"#,##0');
     [C('Status'), C('Pool'), C('Jml Faktur'), C('Umur Tertua (hr lewat JT)'), C('📲 Kirim WA')].forEach(function(col) {
       sh.getRange(ARC_DROW, col, n, 1).setHorizontalAlignment('center');
     });
     sh.getRange(ARC_DROW, C('Tgl Follow-up'), n, 1).setNumberFormat('dd/MM/yyyy');
-    sh.getRange(ARC_DROW, C('Alamat Customer'), n, 1).setWrap(true);
-    sh.getRange(ARC_DROW, C('Pesan'), n, 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    // Satu baris = satu tinggi (pola To-Do): semua sel di-CLIP, isi utuh ada di formula bar,
+    // teks pesan cuma di link Kirim WA (tidak ditampilkan sebagai kolom).
+    sh.setRowHeightsForced(ARC_DROW, n, 22);
 
     // 🟡 dropdown + tint (pola writePoolTab)
     sh.getRange(ARC_DROW, C('Channel'), n, 1).setDataValidation(SpreadsheetApp.newDataValidation()
@@ -237,10 +238,10 @@ function writeArCustomerTab(data, yellow, yPool) {
     'Kolom 🟡 (Channel, Hasil, Tgl Follow-up, Catatan) tersimpan per nama customer. ' +
     (data.excluded.length ? 'Dikeluarkan karena ada di Rekap Corporate: ' + data.excluded.join(', ') + '.' : ''));
 
-  const widths = { 'Customer': 200, 'Status': 75, 'Pool': 55, 'Jml Faktur': 70, 'Daftar Faktur': 150,
+  const widths = { 'Customer': 200, 'Status': 75, 'Pool': 55, 'Jml Faktur': 70, 'Daftar Faktur': 260,
                    'Total Outstanding': 130, 'Umur Tertua (hr lewat JT)': 95, 'No. Telp': 125, '📲 Kirim WA': 105,
                    'Channel': 80, 'Hasil Negosiasi': 120, 'Tgl Follow-up': 100, 'Catatan': 220,
-                   'Alamat Customer': 260, 'Loyalitas (4bln)': 180, 'Pesan': 300 };
+                   'Alamat Customer': 260, 'Loyalitas (4bln)': 180 };
   ARC_HEADERS.forEach(function(h, i) { sh.setColumnWidth(i + 1, widths[h] || 110); });
 
   // 🔴 dikunci (warning-only, pola writePoolTab); 🟡 bebas diisi.
